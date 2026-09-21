@@ -1,0 +1,7 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Backend.Api/Backend.Api.csproj" />
+    <Project Path="src/Backend.Contracts/Backend.Contracts.csproj" />
+    <Project Path="src/Backend.RoutingEngine/Backend.RoutingEngine.csproj" />
+  </Folder>
+</Solution>
