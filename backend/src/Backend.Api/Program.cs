@@ -1,4 +1,6 @@
 using Backend.Api.Services;
+using Backend.Api.Services.CsvParserService;
+using Backend.Api.Services.GeoCodingService;
 using Backend.RoutingEngine;
 using Scalar.AspNetCore;
 
@@ -15,6 +17,18 @@ builder.Services.AddSingleton<OptimizationJobStore>();
 var valhallaUrl = builder.Configuration["Valhalla:BaseUrl"] ?? "http://valhalla:8002";
 builder.Services.AddRoutingEngine(valhallaUrl);
 
+
+builder.Services.AddScoped<ICsvParserService,  CsvParserService>();
+builder.Services.AddScoped<IGeocoder,  GeocoderService>();
+builder.Services.AddHttpClient<IGeocoder, GeocoderService>((sp, client) =>
+{
+    var config = sp.GetRequiredService<IConfiguration>();
+    var baseUrl = config["Nominatim:BaseUrl"] ?? "https://nominatim.openstreetmap.org";
+    var userAgent = config["Nominatim:UserAgent"] ?? "FieldRoutingApp/1.0";
+
+    client.BaseAddress = new Uri(baseUrl);
+    client.DefaultRequestHeaders.UserAgent.ParseAdd(userAgent);
+});
 // Настройка CORS для взаимодействия с фронтендом
 builder.Services.AddCors(options =>
 {

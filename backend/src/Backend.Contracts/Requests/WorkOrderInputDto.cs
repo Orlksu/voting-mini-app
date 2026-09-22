@@ -2,16 +2,18 @@ using Backend.Contracts.Domain.Enums;
 
 namespace Backend.Contracts.Requests;
 
-public record WorkOrderInputDto(
-    string ExternalId,
-    string Address,
-    double? Latitude,
-    double? Longitude,
-    DateTimeOffset WindowStart,
-    DateTimeOffset WindowEnd,
-    SkillType RequiredSkill,
-    TransportType? RequiredTransport,
-    OrderPriority Priority,
-    string TaskType,
-    int DurationMinutes
-);
+public record WorkOrderInputDto
+{
+    public string ExternalId { get; set; } = string.Empty;
+    public string? District { get; set; }
+    public string Address { get; set; } = string.Empty;
+    public double? Latitude { get; set; }
+    public double? Longitude { get; set; }
+    public DateTimeOffset WindowStart { get; set; }
+    public DateTimeOffset WindowEnd { get; set; }
+    public SkillType RequiredSkill { get; set; }
+    public TransportType? RequiredTransport { get; set; }
+    public OrderPriority Priority { get; set; }
+    public string TaskType { get; set; } = string.Empty;
+    public int DurationMinutes { get; set; } = 30;
+}

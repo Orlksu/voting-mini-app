@@ -1,4 +1,6 @@
 using Backend.Api.Services;
+using Backend.Api.Services.CsvParserService;
+using Backend.Api.Services.GeoCodingService;
 using Backend.Contracts.Domain.Enums;
 using Backend.Contracts.Interfaces;
 using Backend.Contracts.Requests;
@@ -14,15 +16,20 @@ public class OptimizationController : ControllerBase
     private readonly IRouteOptimizer _optimizer;
     private readonly OptimizationJobStore _jobStore;
     private readonly ILogger<OptimizationController> _logger;
+    private readonly ICsvParserService  _csvParserService;
+    private readonly IGeocoder  _geocodingService;
 
     public OptimizationController(
         IRouteOptimizer optimizer,
         OptimizationJobStore jobStore,
-        ILogger<OptimizationController> logger)
+        ILogger<OptimizationController> logger, 
+        ICsvParserService csvParserService, IGeocoder  geocoder)
     {
         _optimizer = optimizer;
         _jobStore = jobStore;
         _logger = logger;
+        _csvParserService = csvParserService;
+        _geocodingService = geocoder;
     }
 
     /// <summary>
@@ -191,34 +198,113 @@ public class OptimizationController : ControllerBase
 
         var orders = new List<WorkOrderInputDto>
         {
-            new(
-                ExternalId: "ORD-101",
-                Address: "г. Москва, ул. Арбат, 15",
-                Latitude: 55.7505,
-                Longitude: 37.5942,
-                WindowStart: date.AddHours(1),
-                WindowEnd: date.AddHours(3),
-                RequiredSkill: SkillType.Installation,
-                RequiredTransport: TransportType.Car,
-                Priority: OrderPriority.High,
-                TaskType: "Подключение клиента",
-                DurationMinutes: 70
-            ),
-            new(
-                ExternalId: "ORD-102",
-                Address: "г. Москва, ул. Сретенка, 24",
-                Latitude: 55.7698,
-                Longitude: 37.6331,
-                WindowStart: date.AddHours(2),
-                WindowEnd: date.AddHours(4),
-                RequiredSkill: SkillType.LocalRepair,
-                RequiredTransport: null,
-                Priority: OrderPriority.Normal,
-                TaskType: "Ремонт оборудования",
-                DurationMinutes: 30
-            )
+            new WorkOrderInputDto
+            {
+                ExternalId = "ORD-101",
+                Address = "г. Москва, ул. Арбат, 15",
+                Latitude = 55.7505,
+                Longitude = 37.5942,
+                WindowStart = date.AddHours(1),
+                WindowEnd = date.AddHours(3),
+                RequiredSkill = SkillType.Installation,
+                RequiredTransport = TransportType.Car,
+                Priority = OrderPriority.High,
+                TaskType = "Подключение клиента",
+                DurationMinutes = 70
+            },
+            new WorkOrderInputDto
+            {
+                ExternalId = "ORD-102",
+                Address = "г. Москва, ул. Сретенка, 24",
+                Latitude = 55.7698,
+                Longitude = 37.6331,
+                WindowStart = date.AddHours(2),
+                WindowEnd = date.AddHours(4),
+                RequiredSkill = SkillType.LocalRepair,
+                RequiredTransport = null,
+                Priority = OrderPriority.Normal,
+                TaskType = "Ремонт оборудования",
+                DurationMinutes = 30
+            }
         };
-
         return Ok(new CreateOptimizationPlanRequest(date, engineers, orders));
+        
+    }
+
+    [HttpPost("upload-csv")]
+    [Consumes("multipart/form-data")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> UploadOrdersCsv(List<IFormFile> files, CancellationToken ct)
+    {
+        if (files == null || files.Count == 0)
+        {
+            return BadRequest("Файлы не выбраны.");
+        }
+
+        var allOrders = new List<WorkOrderInputDto>();
+        var badAddresses = new List<string>();
+        RawDepotDto? rawDepot = null;
+        
+        foreach (var file in files)
+        {
+            if (file.Length == 0)
+            {
+                continue;
+            }
+
+            // Читаем поток файла
+            await using var stream = file.OpenReadStream();
+            var parseImportData = await _csvParserService.ParseOrderAsync(stream, ct);
+            var orders = parseImportData.Orders;
+            
+            allOrders.AddRange(orders);
+            if (parseImportData.RawDepot != null)
+            {
+                rawDepot = parseImportData.RawDepot;
+            }
+        }
+
+        DepotDto? finalDepot = null;
+        if (rawDepot != null && !string.IsNullOrWhiteSpace(rawDepot.Address))
+        {
+            var geoOffice = await _geocodingService.GeocodeAsync(rawDepot.Address, null ,ct);
+            if (geoOffice != null)
+            {
+                finalDepot = new DepotDto("Офис", rawDepot.Address, geoOffice.Latitude, geoOffice.Longitude);
+            }
+        } 
+        
+        if (allOrders.Count == 0)
+        {
+            return BadRequest("Не удалось прочитать ни одной заявки из загруженных файлов.");
+        }
+        
+        foreach (var order in allOrders)
+        {
+            if ((order.Latitude == null || order.Longitude == null) && !string.IsNullOrWhiteSpace(order.Address))
+            {
+                var geo = await _geocodingService.GeocodeAsync(order.Address, order.District,ct);
+                if (geo != null)
+                {
+                    order.Latitude = geo.Latitude;
+                    order.Longitude = geo.Longitude;
+                }
+                else
+                {
+                    badAddresses.Add(order.Address);
+                }
+                
+            }
+        }
+
+        return Ok(new
+        {
+            Depot = finalDepot,
+            TotalOrders = allOrders.Count,
+            Orders = allOrders,
+            UnresolvedAddressesCount = badAddresses.Count,
+            BadAddresses = badAddresses
+        });
     }
 }
