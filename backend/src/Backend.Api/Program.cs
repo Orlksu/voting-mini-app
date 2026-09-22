@@ -1,10 +1,15 @@
+using Backend.Api.Services;
 using Backend.RoutingEngine;
+using Scalar.AspNetCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
 builder.Services.AddControllers();
 builder.Services.AddOpenApi();
+
+// Хранилище задач оптимизации (in-memory)
+builder.Services.AddSingleton<OptimizationJobStore>();
 
 // Подключаем движок маршрутизации с адресом Valhalla
 var valhallaUrl = builder.Configuration["Valhalla:BaseUrl"] ?? "http://valhalla:8002";
@@ -27,6 +32,7 @@ var app = builder.Build();
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
+    app.MapScalarApiReference();
 }
 
 app.UseCors();

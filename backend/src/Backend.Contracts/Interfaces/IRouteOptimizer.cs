@@ -5,5 +5,5 @@ namespace Backend.Contracts.Interfaces;
 
 public interface IRouteOptimizer
 {
-    Task<OptimizeRoutesResponse> OptimizeAsync(OptimizeRoutesRequest request, CancellationToken cancellationToken = default);
+    Task<OptimizationResultDto> OptimizeAsync(CreateOptimizationPlanRequest request, CancellationToken cancellationToken = default);
 }

@@ -1,7 +1,7 @@
 using System.Globalization;
 using System.Net.Http.Json;
 using System.Text.Json.Nodes;
-using Backend.Contracts.Models;
+using Backend.Contracts.Domain.ValueObjects;
 using Microsoft.Extensions.Logging;
 
 namespace Backend.RoutingEngine.Clients;
@@ -18,7 +18,7 @@ public class ValhallaClient : IValhallaClient
     }
 
     public async Task<double[,]> GetTimeMatrixAsync(
-        IReadOnlyList<LocationDto> locations,
+        IReadOnlyList<Location> locations,
         string costing = "auto",
         CancellationToken cancellationToken = default)
     {
@@ -32,7 +32,7 @@ public class ValhallaClient : IValhallaClient
 
         try
         {
-            var coords = locations.Select(l => new { lat = l.Latitude, lon = l.Longitude }).ToArray();
+            var coords = locations.Select(l => new { lat = l.Coordinates.Latitude, lon = l.Coordinates.Longitude }).ToArray();
             var payload = new
             {
                 sources = coords,
@@ -99,7 +99,7 @@ public class ValhallaClient : IValhallaClient
     }
 
     public async Task<string?> GetRouteGeoJsonAsync(
-        IReadOnlyList<LocationDto> stops,
+        IReadOnlyList<Location> stops,
         string costing = "auto",
         CancellationToken cancellationToken = default)
     {
@@ -110,7 +110,7 @@ public class ValhallaClient : IValhallaClient
 
         try
         {
-            var coords = stops.Select(s => new { lat = s.Latitude, lon = s.Longitude }).ToArray();
+            var coords = stops.Select(s => new { lat = s.Coordinates.Latitude, lon = s.Coordinates.Longitude }).ToArray();
             var payload = new
             {
                 locations = coords,
@@ -132,14 +132,14 @@ public class ValhallaClient : IValhallaClient
         return null;
     }
 
-    private static double CalculateHaversineKm(LocationDto loc1, LocationDto loc2)
+    private static double CalculateHaversineKm(Location loc1, Location loc2)
     {
         const double R = 6371.0; // Радиус Земли в км
-        double dLat = DegreesToRadians(loc2.Latitude - loc1.Latitude);
-        double dLon = DegreesToRadians(loc2.Longitude - loc1.Longitude);
+        double dLat = DegreesToRadians(loc2.Coordinates.Latitude - loc1.Coordinates.Latitude);
+        double dLon = DegreesToRadians(loc2.Coordinates.Longitude - loc1.Coordinates.Longitude);
 
         double a = Math.Sin(dLat / 2) * Math.Sin(dLat / 2) +
-                   Math.Cos(DegreesToRadians(loc1.Latitude)) * Math.Cos(DegreesToRadians(loc2.Latitude)) *
+                   Math.Cos(DegreesToRadians(loc1.Coordinates.Latitude)) * Math.Cos(DegreesToRadians(loc2.Coordinates.Latitude)) *
                    Math.Sin(dLon / 2) * Math.Sin(dLon / 2);
 
         double c = 2 * Math.Atan2(Math.Sqrt(a), Math.Sqrt(1 - a));

@@ -10,7 +10,7 @@ namespace Backend.RoutingEngine.Solvers;
 /// </summary>
 public class OrToolsVrpSolver
 {
-    public OptimizeRoutesResponse? Solve(OptimizeRoutesRequest request)
+    public OptimizationResultDto? Solve(CreateOptimizationPlanRequest request)
     {
         // Базовая валидация
         if (request.Engineers.Count == 0 || request.Orders.Count == 0)

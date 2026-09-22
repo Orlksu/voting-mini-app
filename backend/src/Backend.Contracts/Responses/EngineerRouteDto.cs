@@ -1,10 +1,15 @@
+using Backend.Contracts.Domain.Enums;
+
 namespace Backend.Contracts.Responses;
 
 public record EngineerRouteDto(
-    string EngineerId,
+    string EngineerExternalId,
     string EngineerName,
+    TransportType Transport,
+    int TotalOrders,
+    double TotalDistanceKm,
+    double BaselineDistanceKm,
+    int TotalTravelMinutes,
     List<RouteStopDto> Stops,
-    int TotalTravelTimeMinutes,
-    int TotalServiceTimeMinutes,
-    double TotalDistanceKm
+    string? EncodedPolyline
 );

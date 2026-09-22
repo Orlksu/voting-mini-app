@@ -1,16 +1,19 @@
-using Backend.Contracts.Models;
+using Backend.Contracts.Domain.Enums;
 
 namespace Backend.Contracts.Responses;
 
 public record RouteStopDto(
-    int StopOrder,
-    string? OrderId,
-    LocationDto Location,
-    TimeOnly EstimatedArrival,
-    TimeOnly ServiceStart,
-    TimeOnly ServiceEnd,
-    TimeOnly EstimatedDeparture,
+    int Sequence,
+    string ExternalOrderId,
+    string Address,
+    double Latitude,
+    double Longitude,
+    DateTimeOffset EstimatedArrival,
+    DateTimeOffset ServiceStart,
+    DateTimeOffset ServiceEnd,
     int TravelDurationMinutes,
-    double DistanceKm,
-    bool IsLate = false
+    double DistanceFromPrevKm,
+    string TaskType,
+    OrderPriority Priority,
+    string AssignmentReason
 );

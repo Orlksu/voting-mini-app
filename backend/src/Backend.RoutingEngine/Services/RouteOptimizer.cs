@@ -19,7 +19,7 @@ public class RouteOptimizer : IRouteOptimizer
         _mockFallback = new MockRouteOptimizer();
     }
 
-    public async Task<OptimizeRoutesResponse> OptimizeAsync(OptimizeRoutesRequest request, CancellationToken cancellationToken = default)
+    public async Task<OptimizationResultDto> OptimizeAsync(CreateOptimizationPlanRequest request, CancellationToken cancellationToken = default)
     {
         _logger.LogInformation("Starting route optimization for {EngineerCount} engineers and {OrderCount} orders",
             request.Engineers.Count, request.Orders.Count);
