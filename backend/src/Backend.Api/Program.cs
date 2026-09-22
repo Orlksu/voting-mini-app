@@ -46,6 +46,8 @@ if (app.Environment.IsDevelopment())
     app.MapScalarApiReference();
 }
 
+app.MapGet("/healthz", () => Results.Ok(new { status = "ok" }));
+
 app.UseCors();
 
 app.UseAuthorization();
