@@ -90,3 +90,31 @@
 | Техническая экспертиза | 30 сентября – 14 октября | онлайн |
 | Презентация проектов | 23 октября | онлайн |
 | Церемония награждения | 30 октября | офлайн в Москве |
+
+## Staging из `develop`
+
+Конфигурация SourceCraft Pipelines находится в `.sourcecraft/ci.yaml`.
+При каждом push в `develop` pipeline:
+
+- запускает `npm ci`, lint и production build frontend;
+- собирает backend через .NET 10 SDK;
+- подключается по SSH к staging VM;
+- получает актуальный `origin/develop`;
+- выполняет `docker compose up -d --build`;
+- проверяет backend health endpoint, sample API и frontend.
+
+На VM один раз подготовьте репозиторий в `~/case-13-field-engineer-routing-team-97`,
+установите Docker Compose plugin, Git и curl, а также создайте `.env.staging`
+по шаблону `.env.staging.example`.
+
+В секретах репозитория SourceCraft создайте:
+
+| Secret | Значение |
+|---|---|
+| `STAGING_HOST` | DNS-имя или IP staging VM |
+| `STAGING_USER` | SSH-пользователь |
+| `STAGING_SSH_PRIVATE_KEY` | приватный SSH-ключ pipeline |
+| `STAGING_KNOWN_HOSTS` | строка из `ssh-keyscan` для VM |
+
+Pipeline запускается облачным worker SourceCraft; staging VM не должна получать
+приватный ключ SourceCraft или webhook-секрет.
