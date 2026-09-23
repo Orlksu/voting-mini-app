@@ -18,6 +18,9 @@ public class EngineerConfiguration : IEntityTypeConfiguration<Engineer>
 
         builder.Property(x => x.Name).HasMaxLength(200);
 
+        builder.Property(x => x.District).HasMaxLength(100);
+        builder.HasIndex(x => x.District);
+
         builder.ComplexProperty(x => x.StartLocation, loc =>
         {
             loc.Property(l => l.RawAddress).HasMaxLength(500);
@@ -40,6 +43,13 @@ public class EngineerConfiguration : IEntityTypeConfiguration<Engineer>
                 json => JsonSerializer.Deserialize<HashSet<SkillType>>(json, JsonOptions) ?? new HashSet<SkillType>())
             .HasColumnType("jsonb")
             .Metadata.SetValueComparer(SkillsValueComparer);
+
+        builder
+            .HasOne(e => e.Depot)
+            .WithMany()
+            .HasForeignKey(e => e.DepotId)
+            .OnDelete(DeleteBehavior.Restrict);
+        ;
     }
     
     private static readonly ValueComparer<HashSet<SkillType>> SkillsValueComparer = new(

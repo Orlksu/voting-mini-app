@@ -7,6 +7,8 @@ public class WorkOrder
 {
     public Guid Id { get; init; } = Guid.NewGuid();
     public string ExternalId { get; init; } = string.Empty;
+    public Guid? DepotId { get; set; }
+    public Depot Depot { get; set; }
     public string District { get; init; } = string.Empty;
     public Location Location { get; set; } = null!;
     public TimeWindow PreferredWindow { get; set; } = null!;

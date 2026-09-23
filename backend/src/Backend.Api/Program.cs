@@ -1,7 +1,10 @@
 using Backend.Api.Infrastructure;
+using Backend.Api.Infrastructure.Repositories;
 using Backend.Api.Services;
 using Backend.Api.Services.CsvParserService;
+using Backend.Api.Services.EngineerService;
 using Backend.Api.Services.GeoCodingService;
+using Backend.Api.Services.WorkOrderService;
 using Backend.RoutingEngine;
 using Microsoft.EntityFrameworkCore;
 using Scalar.AspNetCore;
@@ -26,6 +29,12 @@ builder.Services.AddRoutingEngine(valhallaUrl);
 
 builder.Services.AddScoped<ICsvParserService,  CsvParserService>();
 builder.Services.AddScoped<IGeocoder,  GeocoderService>();
+builder.Services.AddScoped<IDepotRepository, DepotRepository>();
+builder.Services.AddScoped<IWorkOrderRepository, WorkOrderRepository>();
+builder.Services.AddScoped<IEngineerRepository, EngineerRepository>();
+builder.Services.AddScoped<IOperationResultRepository, OperationResultRepository>();
+builder.Services.AddScoped<IWorkOrderService, WorkOrderService>();
+builder.Services.AddScoped<IEngineerService, EngineerService>();
 builder.Services.AddHttpClient<IGeocoder, GeocoderService>((sp, client) =>
 {
     var config = sp.GetRequiredService<IConfiguration>();

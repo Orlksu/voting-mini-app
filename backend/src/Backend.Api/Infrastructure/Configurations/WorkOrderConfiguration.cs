@@ -38,5 +38,11 @@ public class WorkOrderConfiguration : IEntityTypeConfiguration<WorkOrder>
         builder.Property(x => x.RequiredSkill)
             .HasConversion<string>()
             .HasMaxLength(50);
+        builder
+            .HasOne(e => e.Depot)
+            .WithMany()
+            .HasForeignKey(e => e.DepotId)
+            .OnDelete(DeleteBehavior.Restrict);
+            ;
     }
 }

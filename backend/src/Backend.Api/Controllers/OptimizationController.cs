@@ -1,4 +1,5 @@
 using Backend.Api.Services;
+using Backend.Api.Services.WorkOrderService;
 using Backend.Api.Services.CsvParserService;
 using Backend.Api.Services.GeoCodingService;
 using Backend.Contracts.Domain.Enums;
@@ -18,18 +19,20 @@ public class OptimizationController : ControllerBase
     private readonly ILogger<OptimizationController> _logger;
     private readonly ICsvParserService  _csvParserService;
     private readonly IGeocoder  _geocodingService;
+    private readonly IWorkOrderService _workOrderService;
 
     public OptimizationController(
         IRouteOptimizer optimizer,
         OptimizationJobStore jobStore,
         ILogger<OptimizationController> logger, 
-        ICsvParserService csvParserService, IGeocoder  geocoder)
+        ICsvParserService csvParserService, IGeocoder  geocoder, IWorkOrderService workOrderService)
     {
         _optimizer = optimizer;
         _jobStore = jobStore;
         _logger = logger;
         _csvParserService = csvParserService;
         _geocodingService = geocoder;
+        _workOrderService = workOrderService;
     }
 
     /// <summary>
@@ -235,76 +238,81 @@ public class OptimizationController : ControllerBase
     [Consumes("multipart/form-data")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    public async Task<IActionResult> UploadOrdersCsv(List<IFormFile> files, CancellationToken ct)
+public async Task<IActionResult> UploadOrdersCsv(List<IFormFile> files, CancellationToken ct)
+{
+    if (files == null || files.Count == 0)
+        return BadRequest("Файлы не выбраны.");
+
+    var totalUnresolvedCount = 0;
+    var processedFilesCount = 0;
+
+    foreach (var file in files)
     {
-        if (files == null || files.Count == 0)
-        {
-            return BadRequest("Файлы не выбраны.");
-        }
+        if (file.Length == 0)
+            continue;
 
-        var allOrders = new List<WorkOrderInputDto>();
-        var badAddresses = new List<string>();
-        RawDepotDto? rawDepot = null;
-        
-        foreach (var file in files)
-        {
-            if (file.Length == 0)
-            {
-                continue;
-            }
+        await using var stream = file.OpenReadStream();
+        var parseData = await _csvParserService.ParseOrderAsync(stream, ct);
 
-            // Читаем поток файла
-            await using var stream = file.OpenReadStream();
-            var parseImportData = await _csvParserService.ParseOrderAsync(stream, ct);
-            var orders = parseImportData.Orders;
-            
-            allOrders.AddRange(orders);
-            if (parseImportData.RawDepot != null)
-            {
-                rawDepot = parseImportData.RawDepot;
-            }
-        }
+        if (parseData.Orders.Count == 0)
+            continue; // Пропускаем файл без заявок, не ломая остальные
 
+        // 1. Геокодируем депо
         DepotDto? finalDepot = null;
-        if (rawDepot != null && !string.IsNullOrWhiteSpace(rawDepot.Address))
+        if (parseData.RawDepot != null && !string.IsNullOrWhiteSpace(parseData.RawDepot.Address))
         {
-            var geoOffice = await _geocodingService.GeocodeAsync(rawDepot.Address, null ,ct);
+            var geoOffice = await _geocodingService.GeocodeAsync(parseData.RawDepot.Address, null, ct);
             if (geoOffice != null)
             {
-                finalDepot = new DepotDto("Офис", rawDepot.Address, geoOffice.Latitude, geoOffice.Longitude);
+                // Название района берем из первой заявки или имени офиса
+                var district = parseData.Orders[0].District ?? "Неизвестный район";
+                finalDepot = new DepotDto(district, parseData.RawDepot.Address, geoOffice.Latitude, geoOffice.Longitude);
             }
-        } 
-        
-        if (allOrders.Count == 0)
-        {
-            return BadRequest("Не удалось прочитать ни одной заявки из загруженных файлов.");
         }
-        
-        foreach (var order in allOrders)
+
+        if (finalDepot == null)
+        {
+            // Без точки депо район рассчитывать нельзя
+            return BadRequest($"Не удалось определить координаты офиса для файла {file.FileName}.");
+        }
+
+        // 2. Геокодируем заявки и отсеиваем битые
+        var validOrders = new List<WorkOrderInputDto>();
+
+        foreach (var order in parseData.Orders)
         {
             if ((order.Latitude == null || order.Longitude == null) && !string.IsNullOrWhiteSpace(order.Address))
             {
-                var geo = await _geocodingService.GeocodeAsync(order.Address, order.District,ct);
+                var geo = await _geocodingService.GeocodeAsync(order.Address, order.District, ct);
                 if (geo != null)
                 {
                     order.Latitude = geo.Latitude;
                     order.Longitude = geo.Longitude;
+                    validOrders.Add(order);
                 }
                 else
                 {
-                    badAddresses.Add(order.Address);
+                    totalUnresolvedCount++;
                 }
-                
+            }
+            else if (order.Latitude != null && order.Longitude != null)
+            {
+                validOrders.Add(order);
+            }
+            else
+            {
+                totalUnresolvedCount++;
             }
         }
-
-        return Ok(new
-        {
-            Depot = finalDepot,
-            TotalOrders = allOrders.Count,
-            Orders = allOrders,
-            UnresolvedAddressesCount = badAddresses.Count,
-            BadAddresses = badAddresses
-        });
+        
+        await _workOrderService.AddFromImportAsync(finalDepot, validOrders, ct);
+        processedFilesCount++;
     }
+
+    return Ok(new
+    {
+        ProcessedFiles = processedFilesCount,
+        UnresolvedAddressesCount = totalUnresolvedCount
+    });
+}
 }

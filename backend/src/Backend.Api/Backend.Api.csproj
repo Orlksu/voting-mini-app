@@ -22,8 +22,4 @@
     <ProjectReference Include="..\Backend.RoutingEngine\Backend.RoutingEngine.csproj" />
   </ItemGroup>
 
-  <ItemGroup>
-    <Folder Include="Infrastructure\Repositories\" />
-  </ItemGroup>
-
 </Project>

@@ -7,6 +7,9 @@ public class Engineer
 {
     public Guid Id { get; init; } = Guid.NewGuid();
     public string ExternalId { get; init; } = string.Empty;
+    public Guid? DepotId { get; set; }
+    public Depot Depot { get; set; }
+    public string District { get; set; } = string.Empty;
     public string Name { get; set; } = string.Empty;
     public Location StartLocation { get; set; } = null!;
     public TimeWindow Shift { get; set; } = null!;
