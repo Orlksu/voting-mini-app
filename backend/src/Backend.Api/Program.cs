@@ -1,7 +1,9 @@
+using Backend.Api.Infrastructure;
 using Backend.Api.Services;
 using Backend.Api.Services.CsvParserService;
 using Backend.Api.Services.GeoCodingService;
 using Backend.RoutingEngine;
+using Microsoft.EntityFrameworkCore;
 using Scalar.AspNetCore;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -9,6 +11,10 @@ var builder = WebApplication.CreateBuilder(args);
 // Add services to the container.
 builder.Services.AddControllers();
 builder.Services.AddOpenApi();
+
+// Подключаем PostgreSQL (EF Core)
+builder.Services.AddDbContext<AppDbContext>(options =>
+    options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
 
 // Хранилище задач оптимизации (in-memory)
 builder.Services.AddSingleton<OptimizationJobStore>();
@@ -42,7 +48,6 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
-// Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
