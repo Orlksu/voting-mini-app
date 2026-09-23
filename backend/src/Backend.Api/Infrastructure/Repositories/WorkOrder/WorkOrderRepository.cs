@@ -8,7 +8,39 @@ public class WorkOrderRepository(AppDbContext db) : IWorkOrderRepository
 {
     public async Task AddRangeAsync(IEnumerable<WorkOrder> orders, CancellationToken ct = default)
     {
-        await db.WorkOrders.AddRangeAsync(orders, ct);
+        var list = orders.ToList();
+        if (list.Count == 0)
+            return;
+
+        var existing = await db.WorkOrders
+            .Where(w => list.Select(o => o.ExternalId).Contains(w.ExternalId))
+            .ToListAsync(ct);
+        var existingByKey = existing.ToDictionary(w => (w.ExternalId, w.District));
+
+        var processed = new HashSet<(string, string)>();
+        foreach (var order in list)
+        {
+            var key = (order.ExternalId, order.District);
+            if (!processed.Add(key))
+                continue;
+
+            if (existingByKey.TryGetValue(key, out var current))
+            {
+                current.Location = order.Location;
+                current.PreferredWindow = order.PreferredWindow;
+                current.ServiceDuration = order.ServiceDuration;
+                current.RequiredSkill = order.RequiredSkill;
+                current.RequiredTransport = order.RequiredTransport;
+                current.Priority = order.Priority;
+                current.TaskType = order.TaskType;
+                current.DepotId = order.DepotId;
+            }
+            else
+            {
+                db.WorkOrders.Add(order);
+            }
+        }
+
         await db.SaveChangesAsync(ct);
     }
 

@@ -180,6 +180,34 @@ namespace Backend.Api.Infrastructure.Migrations
                     b.ToTable("EngineerRoutes");
                 });
 
+            modelBuilder.Entity("Backend.Contracts.Domain.Entities.GeocodeCacheItem", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<double>("Latitude")
+                        .HasColumnType("double precision");
+
+                    b.Property<double>("Longitude")
+                        .HasColumnType("double precision");
+
+                    b.Property<string>("RawQuery")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RawQuery")
+                        .IsUnique();
+
+                    b.ToTable("GeocodeCache");
+                });
+
             modelBuilder.Entity("Backend.Contracts.Domain.Entities.OperationResult", b =>
                 {
                     b.Property<Guid>("Id")

@@ -35,6 +35,7 @@ builder.Services.AddScoped<IEngineerRepository, EngineerRepository>();
 builder.Services.AddScoped<IOperationResultRepository, OperationResultRepository>();
 builder.Services.AddScoped<IWorkOrderService, WorkOrderService>();
 builder.Services.AddScoped<IEngineerService, EngineerService>();
+builder.Services.AddScoped<IGeocodeCacheRepository, GeocodeCacheRepository>();
 builder.Services.AddHttpClient<IGeocoder, GeocoderService>((sp, client) =>
 {
     var config = sp.GetRequiredService<IConfiguration>();

@@ -10,6 +10,7 @@ public class AppDbContext : DbContext
     }
 
     public DbSet<Depot> Depots => Set<Depot>();
+    public DbSet<GeocodeCacheItem> GeocodeCache => Set<GeocodeCacheItem>();
     public DbSet<WorkOrder> WorkOrders => Set<WorkOrder>();
     public DbSet<Engineer> Engineers => Set<Engineer>();
     public DbSet<EngineerRoute> EngineerRoutes => Set<EngineerRoute>();

@@ -6,22 +6,22 @@ using System.Net.Http.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
+using Backend.Api.Infrastructure.Repositories;
 
 namespace Backend.Api.Services.GeoCodingService;
 
-public class GeocoderService : IGeocoder
+public class GeocoderService(HttpClient httpClient, IGeocodeCacheRepository cache) : IGeocoder
 {
-    private readonly HttpClient _httpClient;
-
-    public GeocoderService(HttpClient httpClient)
-    {
-        _httpClient = httpClient;
-    }
-
     public async Task<GeocoderResultDto?> GeocodeAsync(string address, string? district = null, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(address))
             return null;
+
+        var rawQuery = QueryKey(address, district);
+
+        var cached = await cache.GetByQueryAsync(rawQuery, cancellationToken);
+        if (cached != null)
+            return cached;
 
         var searchQueries = BuildSearchQueries(address, district);
 
@@ -29,11 +29,19 @@ public class GeocoderService : IGeocoder
         {
             var result = await QueryNominatimAsync(query, cancellationToken);
             if (result != null)
+            {
+                await cache.SaveAsync(rawQuery, result.Latitude, result.Longitude, cancellationToken);
                 return result;
+            }
         }
 
         return null;
     }
+
+    private static string QueryKey(string address, string? district)
+        => string.IsNullOrWhiteSpace(district)
+            ? address.Trim()
+            : $"{address.Trim()} | {district.Trim()}";
 
     public async Task<GeocoderResultDto?> QueryNominatimAsync(string query, CancellationToken ct)
     {
@@ -43,7 +51,7 @@ public class GeocoderService : IGeocoder
 
             var url = $"/search?q={Uri.EscapeDataString(query)}&format=json&limit=1&countrycodes=ru&viewbox={mskViewbox}&bounded=1";
         
-            var results = await _httpClient.GetFromJsonAsync<List<GeocoderResultDto>>(url, ct);
+            var results = await httpClient.GetFromJsonAsync<List<GeocoderResultDto>>(url, ct);
 
             await Task.Delay(1100, ct);
 
