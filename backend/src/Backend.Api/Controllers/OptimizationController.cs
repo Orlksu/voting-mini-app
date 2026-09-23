@@ -255,16 +255,14 @@ public async Task<IActionResult> UploadOrdersCsv(List<IFormFile> files, Cancella
         var parseData = await _csvParserService.ParseOrderAsync(stream, ct);
 
         if (parseData.Orders.Count == 0)
-            continue; // Пропускаем файл без заявок, не ломая остальные
-
-        // 1. Геокодируем депо
+            continue;
+        
         DepotDto? finalDepot = null;
         if (parseData.RawDepot != null && !string.IsNullOrWhiteSpace(parseData.RawDepot.Address))
         {
             var geoOffice = await _geocodingService.GeocodeAsync(parseData.RawDepot.Address, null, ct);
             if (geoOffice != null)
             {
-                // Название района берем из первой заявки или имени офиса
                 var district = parseData.Orders[0].District ?? "Неизвестный район";
                 finalDepot = new DepotDto(district, parseData.RawDepot.Address, geoOffice.Latitude, geoOffice.Longitude);
             }
@@ -272,11 +270,9 @@ public async Task<IActionResult> UploadOrdersCsv(List<IFormFile> files, Cancella
 
         if (finalDepot == null)
         {
-            // Без точки депо район рассчитывать нельзя
+ 
             return BadRequest($"Не удалось определить координаты офиса для файла {file.FileName}.");
         }
-
-        // 2. Геокодируем заявки и отсеиваем битые
         var validOrders = new List<WorkOrderInputDto>();
 
         foreach (var order in parseData.Orders)

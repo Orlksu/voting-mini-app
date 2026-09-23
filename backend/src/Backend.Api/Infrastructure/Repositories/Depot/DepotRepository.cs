@@ -34,4 +34,17 @@ public class DepotRepository(AppDbContext db) : IDepotRepository
         await db.SaveChangesAsync(ct);
         return depot;
     }
+
+    public async Task<Depot> EnsureExistsAsync(string district, CancellationToken ct = default)
+    {
+        var depot = await db.Depots.FirstOrDefaultAsync(d => d.District == district, ct);
+        if (depot is null)
+        {
+            depot = new Depot { District = district };
+            await db.Depots.AddAsync(depot, ct);
+            await db.SaveChangesAsync(ct);
+        }
+
+        return depot;
+    }
 }

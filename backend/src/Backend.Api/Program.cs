@@ -28,6 +28,7 @@ builder.Services.AddRoutingEngine(valhallaUrl);
 
 
 builder.Services.AddScoped<ICsvParserService,  CsvParserService>();
+builder.Services.AddScoped<IEngineerCsvParser, EngineerCsvParser>();
 builder.Services.AddScoped<IGeocoder,  GeocoderService>();
 builder.Services.AddScoped<IDepotRepository, DepotRepository>();
 builder.Services.AddScoped<IWorkOrderRepository, WorkOrderRepository>();
