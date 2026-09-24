@@ -6,7 +6,6 @@ services:
   backend:
     environment:
       ASPNETCORE_ENVIRONMENT: Development
-      ConnectionStrings__DefaultConnection: "Host=db;Port=5432;Database=${POSTGRES_DB:-lctdb};Username=${POSTGRES_USER:-user};Password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}"
       Valhalla__BaseUrl: "http://valhalla:8002"
     ports:
       - "${STAGING_BACKEND_PORT:-5001}:8080"

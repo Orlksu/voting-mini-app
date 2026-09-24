@@ -57,7 +57,7 @@ workflows:
                 docker compose --env-file .env.staging \
                   -f docker-compose.yml \
                   -f docker-compose.staging.yml \
-                  up -d --build --remove-orphans
+                  up -d --build --force-recreate --remove-orphans
                 frontend_port="${STAGING_FRONTEND_PORT:-8080}"
                 backend_port="${STAGING_BACKEND_PORT:-5001}"
                 curl --fail --silent --show-error --retry 20 --retry-delay 3 \
