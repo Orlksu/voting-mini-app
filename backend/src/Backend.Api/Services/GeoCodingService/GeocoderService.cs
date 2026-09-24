@@ -7,10 +7,11 @@ using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Backend.Api.Infrastructure.Repositories;
+using Microsoft.Extensions.Logging;
 
 namespace Backend.Api.Services.GeoCodingService;
 
-public class GeocoderService(HttpClient httpClient, IGeocodeCacheRepository cache) : IGeocoder
+public class GeocoderService(HttpClient httpClient, IGeocodeCacheRepository cache, ILogger<GeocoderService> logger) : IGeocoder
 {
     public async Task<GeocoderResultDto?> GeocodeAsync(string address, string? district = null, CancellationToken cancellationToken = default)
     {
@@ -57,8 +58,9 @@ public class GeocoderService(HttpClient httpClient, IGeocodeCacheRepository cach
 
             return results?.FirstOrDefault();
         }
-        catch
+        catch (Exception ex)
         {
+            logger.LogWarning(ex, "Ошибка геокодирования запроса \"{Query}\"", query);
             return null;
         }
     }

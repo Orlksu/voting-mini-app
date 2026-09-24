@@ -44,7 +44,8 @@ builder.Services.AddHttpClient<IGeocoder, GeocoderService>((sp, client) =>
     var userAgent = config["Nominatim:UserAgent"] ?? "FieldRoutingApp/1.0";
 
     client.BaseAddress = new Uri(baseUrl);
-    client.DefaultRequestHeaders.UserAgent.ParseAdd(userAgent);
+    if (!string.IsNullOrWhiteSpace(userAgent))
+        client.DefaultRequestHeaders.UserAgent.ParseAdd(userAgent);
 });
 // Настройка CORS для взаимодействия с фронтендом
 builder.Services.AddCors(options =>
