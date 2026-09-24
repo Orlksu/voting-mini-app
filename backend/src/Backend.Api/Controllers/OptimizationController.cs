@@ -191,34 +191,36 @@ public class OptimizationController : ControllerBase
 
         var orders = new List<WorkOrderInputDto>
         {
-            new(
-                ExternalId: "ORD-101",
-                Address: "г. Москва, ул. Арбат, 15",
-                Latitude: 55.7505,
-                Longitude: 37.5942,
-                WindowStart: date.AddHours(1),
-                WindowEnd: date.AddHours(3),
-                RequiredSkill: SkillType.Installation,
-                RequiredTransport: TransportType.Car,
-                Priority: OrderPriority.High,
-                TaskType: "Подключение клиента",
-                DurationMinutes: 70
-            ),
-            new(
-                ExternalId: "ORD-102",
-                Address: "г. Москва, ул. Сретенка, 24",
-                Latitude: 55.7698,
-                Longitude: 37.6331,
-                WindowStart: date.AddHours(2),
-                WindowEnd: date.AddHours(4),
-                RequiredSkill: SkillType.LocalRepair,
-                RequiredTransport: null,
-                Priority: OrderPriority.Normal,
-                TaskType: "Ремонт оборудования",
-                DurationMinutes: 30
-            )
+            new WorkOrderInputDto
+            {
+                ExternalId = "ORD-101",
+                Address = "г. Москва, ул. Арбат, 15",
+                Latitude = 55.7505,
+                Longitude = 37.5942,
+                WindowStart = date.AddHours(1),
+                WindowEnd = date.AddHours(3),
+                RequiredSkill = SkillType.Installation,
+                RequiredTransport = TransportType.Car,
+                Priority = OrderPriority.High,
+                TaskType = "Подключение клиента",
+                DurationMinutes = 70
+            },
+            new WorkOrderInputDto
+            {
+                ExternalId = "ORD-102",
+                Address = "г. Москва, ул. Сретенка, 24",
+                Latitude = 55.7698,
+                Longitude = 37.6331,
+                WindowStart = date.AddHours(2),
+                WindowEnd = date.AddHours(4),
+                RequiredSkill = SkillType.LocalRepair,
+                RequiredTransport = null,
+                Priority = OrderPriority.Normal,
+                TaskType = "Ремонт оборудования",
+                DurationMinutes = 30
+            }
         };
-
         return Ok(new CreateOptimizationPlanRequest(date, engineers, orders));
+        
     }
 }

@@ -1,3 +1,7 @@
 namespace Backend.Contracts.Domain.ValueObjects;
 
-public record Location(string RawAddress, GeoCoordinate Coordinates);
+public class Location
+{
+    public string RawAddress { get; init; } = string.Empty;
+    public GeoCoordinate Coordinates { get; init; }
+}
