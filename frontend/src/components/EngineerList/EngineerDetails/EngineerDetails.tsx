@@ -5,6 +5,19 @@ interface EngineerDetailsProps {
   engineer?: Engineer
 }
 
+const transportLabels: Record<string, string> = {
+  Car: 'автомобиль',
+  PublicTransit: 'общественный транспорт',
+  Bicycle: 'велосипед',
+  Pedestrian: 'пешком',
+}
+
+const skillLabels: Record<string, string> = {
+  LocalRepair: 'локальный ремонт',
+  Installation: 'установка',
+  Emergency: 'аварийные работы',
+}
+
 const EngineerLabel = ({
   label,
   fields,
@@ -38,28 +51,38 @@ const EngineerLabel = ({
 }
 
 export default function EngineerDetails({ engineer }: EngineerDetailsProps) {
+  if (!engineer) {
+    return null
+  }
+
   return (
     <div
       className={styles.engineerDetailsContainer}
-      data-engineer-id={engineer?.id}
+      data-engineer-id={engineer.id}
     >
-      <EngineerLabel label={'транспорт'} fields={[engineer!.transport]} />
       <EngineerLabel
-        label={'смена'}
+        label="транспорт"
+        fields={[transportLabels[engineer.transport] ?? engineer.transport]}
+      />
+      <EngineerLabel
+        label="смена"
         fields={[
-          `${new Date(engineer!.shiftStart).toLocaleTimeString('ru-RU', {
+          `${new Date(engineer.shiftStart).toLocaleTimeString('ru-RU', {
             hour: '2-digit',
             minute: '2-digit',
-          })}-${new Date(engineer!.shiftEnd).toLocaleTimeString('ru-RU', {
+          })}-${new Date(engineer.shiftEnd).toLocaleTimeString('ru-RU', {
             hour: '2-digit',
             minute: '2-digit',
           })}`,
         ]}
       />
-      <EngineerLabel label={'навыки'} fields={engineer!.skills} />
       <EngineerLabel
-        label={'текущий статус'}
-        fields={[!engineer!.isAvailable ? 'на вызове' : 'на воле']}
+        label="навыки"
+        fields={engineer.skills.map((skill) => skillLabels[skill] ?? skill)}
+      />
+      <EngineerLabel
+        label="текущий статус"
+        fields={[engineer.isAvailable ? 'свободен' : 'на вызове']}
       />
     </div>
   )
