@@ -6,6 +6,7 @@ using Backend.Api.Services.EngineerService;
 using Backend.Api.Services.GeoCodingService;
 using Backend.Api.Services.WorkOrderService;
 using Backend.RoutingEngine;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
 using Scalar.AspNetCore;
 
@@ -14,6 +15,14 @@ var builder = WebApplication.CreateBuilder(args);
 // Add services to the container.
 builder.Services.AddControllers();
 builder.Services.AddOpenApi();
+builder.Services.Configure<ForwardedHeadersOptions>(options =>
+{
+    options.ForwardedHeaders =
+        ForwardedHeaders.XForwardedFor |
+        ForwardedHeaders.XForwardedProto;
+    options.KnownNetworks.Clear();
+    options.KnownProxies.Clear();
+});
 
 // Подключаем PostgreSQL (EF Core)
 builder.Services.AddDbContext<AppDbContext>(options =>
@@ -60,11 +69,17 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
+// Configure the HTTP request pipeline.
+app.UseForwardedHeaders();
+
+
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
     app.MapScalarApiReference();
 }
+
+app.MapGet("/healthz", () => Results.Ok(new { status = "ok" }));
 
 app.UseCors();
 
