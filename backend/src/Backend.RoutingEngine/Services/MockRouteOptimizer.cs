@@ -77,13 +77,13 @@ public class MockRouteOptimizer : IRouteOptimizer
 
             foreach (var order in assignedOrders)
             {
-                // Примерное расстояние: 3.5 км, время в пути 15 минут
+              \
                 double legDistance = 3.5;
                 int travelMinutes = 15;
 
                 var arrival = currentTime.AddMinutes(travelMinutes);
-                // Ждём начала окна, если приехали раньше
-                var serviceStart = arrival < order.WindowStart ? order.WindowStart : arrival;
+            
+                var serviceStart = order.WindowStart is { } windowStart && arrival < windowStart ? windowStart : arrival;
                 var serviceEnd = serviceStart.AddMinutes(order.DurationMinutes);
 
                 stops.Add(new RouteStopDto(

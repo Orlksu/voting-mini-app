@@ -103,6 +103,9 @@ public class WorkOrderService(IDepotRepository depots, IWorkOrderRepository work
                 continue;
             }
 
+            var windowStart = o.WindowStart ?? DateTimeOffset.UtcNow;
+            var windowEnd = o.WindowEnd ?? windowStart.AddMinutes(o.DurationMinutes);
+
             entities.Add(new WorkOrder
             {
                 ExternalId = o.ExternalId,
@@ -112,7 +115,7 @@ public class WorkOrderService(IDepotRepository depots, IWorkOrderRepository work
                     RawAddress = o.Address,
                     Coordinates = new GeoCoordinate(latitude.Value, longitude.Value),
                 },
-                PreferredWindow = new TimeWindow(o.WindowStart.ToUniversalTime(), o.WindowEnd.ToUniversalTime()),
+                PreferredWindow = new TimeWindow(windowStart.ToUniversalTime(), windowEnd.ToUniversalTime()),
                 ServiceDuration = TimeSpan.FromMinutes(o.DurationMinutes),
                 RequiredSkill = o.RequiredSkill,
                 RequiredTransport = o.RequiredTransport,

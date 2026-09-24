@@ -78,35 +78,49 @@ public sealed class WorkOrderCsvMap : ClassMap<WorkOrderInputDto>
         return 30;
       
     }
-    private static DateTimeOffset ParseDateTimeSafe(string? text)
+   
+    private static DateTimeOffset? ParseDateTimeSafe(string? text, DateTime? baseDate = null)
     {
         if (string.IsNullOrWhiteSpace(text))
-            return DateTimeOffset.MinValue;
+            return null;
 
-        string[] formats =
-        {
+        var msk = TimeZoneInfo.FindSystemTimeZoneById("Europe/Moscow");
+        var mskOffset = msk.GetUtcOffset(DateTime.UtcNow);
+        var trimmed = text.Trim();
+
+        string[] fullFormats =
+        [
             "dd.MM.yyyy HH:mm",
             "dd.MM.yyyy H:mm",
             "dd.MM.yyyy HH:mm:ss",
             "yyyy-MM-ddTHH:mm:ss",
             "yyyy-MM-dd HH:mm"
-        };
+        ];
 
-        var mskOffset = TimeSpan.FromHours(3);
-
-        if (DateTime.TryParseExact(text.Trim(), formats, CultureInfo.InvariantCulture, DateTimeStyles.None, out var dt))
+    
+        if (DateTime.TryParseExact(trimmed, fullFormats, CultureInfo.InvariantCulture, DateTimeStyles.None, out var dt))
         {
-            return new DateTimeOffset(dt, mskOffset);
+            return new DateTimeOffset(DateTime.SpecifyKind(dt, DateTimeKind.Unspecified), mskOffset);
         }
 
-        if (DateTimeOffset.TryParse(text.Trim(), CultureInfo.GetCultureInfo("ru-RU"), DateTimeStyles.None, out var dto))
+       
+        string[] timeFormats = ["HH:mm", "H:mm", "HH:mm:ss"];
+        if (DateTime.TryParseExact(trimmed, timeFormats, CultureInfo.InvariantCulture, DateTimeStyles.None, out var timeOnly))
+        {
+            var mskToday = baseDate
+                ?? TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, msk).Date;
+            var combined = mskToday.Add(timeOnly.TimeOfDay);
+            return new DateTimeOffset(DateTime.SpecifyKind(combined, DateTimeKind.Unspecified), mskOffset);
+        }
+
+     
+        if (DateTimeOffset.TryParse(trimmed, CultureInfo.GetCultureInfo("ru-RU"), DateTimeStyles.None, out var dto))
         {
             return dto;
         }
 
-        return DateTimeOffset.MinValue;
+        return null;
     }
-
     private static SkillType MapSkillType(string bkType, string hdType)
     {
         var combined = $"{bkType} {hdType}".ToLowerInvariant();
