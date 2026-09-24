@@ -1,0 +1,66 @@
+.headerContainer {
+  pointer-events: auto;
+
+  background-color: rgb(var(--color-ink) / 0.8);
+
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+
+  margin: 40px 30px;
+  padding: 5px 25px;
+
+  border-radius: 30px;
+
+  nav {
+    display: flex;
+    gap: 15px;
+
+    button {
+      padding: 0;
+
+      color: white;
+      background: transparent;
+      border: 0;
+      cursor: pointer;
+      font: inherit;
+      font-size: 24px;
+    }
+  }
+
+  .uploadCsv {
+    font-size: 24px;
+    color: white;
+  }
+}
+
+.sectionControls {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.sectionTitle {
+  color: white;
+  font-size: 24px;
+}
+
+.closeButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+
+  border: none;
+  color: white;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  font-size: 28px;
+}
+
+.title {
+  color: #b3b3b3;
+  font-weight: 900;
+  font-size: 45px;
+  font-family: var(--font-mono), monospace;
+}
