@@ -5,6 +5,8 @@ namespace Backend.Api.Infrastructure.Repositories;
 
 public class EngineerRepository(AppDbContext db) : IEngineerRepository
 {
+    public async Task<Engineer?> GetByExternalIdAsync(string id, CancellationToken ct = default)
+        => await db.Engineers.AsNoTracking().FirstOrDefaultAsync(e => e.ExternalId == id, ct);
     public async Task<Engineer?> GetByIdAsync(Guid id, CancellationToken ct = default)
         => await db.Engineers.AsNoTracking().FirstOrDefaultAsync(e => e.Id == id, ct);
 
@@ -66,6 +68,8 @@ public class EngineerRepository(AppDbContext db) : IEngineerRepository
 
         await db.SaveChangesAsync(ct);
     }
+    public async Task<int> DeleteEngineerAsync(string externalId, CancellationToken ct = default)
+        => await db.Engineers.Where(e => e.ExternalId == externalId).ExecuteDeleteAsync();
 
     public async Task UpdateAvailabilityAsync(Guid engineerId, bool isAvailable, CancellationToken ct = default)
         => await db.Engineers

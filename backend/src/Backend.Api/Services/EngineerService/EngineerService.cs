@@ -165,6 +165,14 @@ public class EngineerService(IDepotRepository depots, IEngineerRepository engine
         return new EngineerImportResultDto(imported, skipped, unresolved, depotsCreated, warnings);
     }
 
+    public async Task<bool> DeleteEngineerAsync(string externalId, CancellationToken ct = default)
+        => await engineers.DeleteEngineerAsync(externalId, ct) > 0;
+
+    public async Task<EngineerDto?> GetEngineerByExternalIdAsync(string externalId, CancellationToken ct = default)
+    {
+        var engineer = await engineers.GetByExternalIdAsync(externalId, ct);
+        return engineer is null ? null : ToDto(engineer);
+    }
     private async Task<Location?> ResolveStartLocationAsync(EngineerCsvRowDto raw, Depot depot, CancellationToken ct)
     {
         var lat = ParseCoordinate(raw.StartLatitude);
