@@ -42,7 +42,12 @@ public sealed class WorkOrderCsvMap : ClassMap<WorkOrderInputDto>
         Map(m => m.TaskType).Convert(args =>
             args.Row.GetField("Тип заявки HD") ?? args.Row.GetField("Тип заявки BK") ?? "Обслуживание");
         Map(m => m.District).Name("Район");
-        Map(m => m.DurationMinutes).Constant(30);
+        
+        Map(m => m.DurationMinutes).Convert(args =>
+        {
+            var bkType = args.Row.GetField("Тип заявки BK") ?? string.Empty;
+            return MapDuration(bkType);
+        });
     }
 
     private static double? ParseDoubleSafe(string? text)
@@ -52,6 +57,27 @@ public sealed class WorkOrderCsvMap : ClassMap<WorkOrderInputDto>
         return double.TryParse(text, NumberStyles.Any, CultureInfo.InvariantCulture, out var value) ? value : null;
     }
 
+    private static int MapDuration(string? bkType)
+    {
+        var  formatedType = bkType.ToLowerInvariant();
+        if (formatedType.Contains("авария") || formatedType.Contains("глобальная"))
+        {
+            return 80;
+        }
+
+        if (formatedType.Contains("подключение"))
+        {
+            return 60;
+        }
+
+        if (formatedType.Contains("дозаказ"))
+        {
+            return 10 ;
+        }
+        
+        return 30;
+      
+    }
     private static DateTimeOffset ParseDateTimeSafe(string? text)
     {
         if (string.IsNullOrWhiteSpace(text))
