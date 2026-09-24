@@ -1,0 +1,39 @@
+.engineerLabel {
+  display: flex;
+  flex-direction: column;
+  font-size: 20px;
+
+  .label {
+    color: #b3b3b3;
+  }
+
+  .fields {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 5px;
+  }
+
+  .field {
+    min-width: 0;
+    margin: 0;
+    padding: 5px 20px;
+    text-align: center;
+    border-radius: 20px;
+    color: white;
+    border: 2px solid rgb(var(--color-sand) / 0.7);
+  }
+}
+
+.fieldsSingle .field {
+  grid-column: 1 / -1;
+}
+
+.fieldsTriple .field:last-child {
+  grid-column: 1 / -1;
+}
+
+.engineerDetailsContainer {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
