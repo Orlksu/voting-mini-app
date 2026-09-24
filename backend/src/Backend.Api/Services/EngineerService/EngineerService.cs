@@ -11,6 +11,28 @@ namespace Backend.Api.Services.EngineerService;
 
 public class EngineerService(IDepotRepository depots, IEngineerRepository engineers, IGeocoder geocoder) : IEngineerService
 {
+    public async Task<List<EngineerDto>> GetAllAsync(CancellationToken ct = default)
+    {
+        var list = await engineers.GetAllAsync(ct);
+        return list.Select(ToDto).ToList();
+    }
+
+    private static EngineerDto ToDto(Engineer e) => new(
+        e.Id,
+        e.ExternalId,
+        e.Name,
+        e.District,
+        e.DepotId,
+        e.StartLocation?.RawAddress ?? string.Empty,
+        e.StartLocation?.Coordinates.Latitude ?? 0.0,
+        e.StartLocation?.Coordinates.Longitude ?? 0.0,
+        e.Shift.Start,
+        e.Shift.End,
+        e.Transport,
+        e.Skills,
+        e.IsAvailable,
+        e.MaxOrdersPerShift);
+
     public async Task<Engineer> AddAsync(string district, EngineerInputDto engineer, CancellationToken ct = default)
     {
         var depot = await depots.GetOrCreateAsync(

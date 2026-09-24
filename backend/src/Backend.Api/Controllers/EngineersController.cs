@@ -9,6 +9,11 @@ namespace Backend.Api.Controllers;
 [Route("api/v1/engineers")]
 public class EngineersController(IEngineerCsvParser csvParser, IEngineerService engineerService) : ControllerBase
 {
+    [HttpGet]
+    [ProducesResponseType<List<EngineerDto>>(StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetAll(CancellationToken ct)
+        => Ok(await engineerService.GetAllAsync(ct));
+
     [HttpPost("upload-csv")]
     [Consumes("multipart/form-data")]
     [ProducesResponseType(StatusCodes.Status200OK)]

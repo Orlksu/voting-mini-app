@@ -5,6 +5,7 @@ namespace Backend.Api.Infrastructure.Repositories;
 public interface IEngineerRepository
 {
     Task<Engineer?> GetByIdAsync(Guid id, CancellationToken ct = default);
+    Task<List<Engineer>> GetAllAsync(CancellationToken ct = default);
     Task<List<Engineer>> GetAvailableByDepotIdAsync(Guid depotId, CancellationToken ct = default);
     Task<List<Engineer>> GetAvailableByDistrictAsync(string district, CancellationToken ct = default);
     Task AddAsync(Engineer engineer, CancellationToken ct = default);

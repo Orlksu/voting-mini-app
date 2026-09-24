@@ -8,8 +8,76 @@ using Microsoft.Extensions.Logging;
 
 namespace Backend.Api.Services.WorkOrderService;
 
-public class WorkOrderService(IDepotRepository depots, IWorkOrderRepository workOrders, ILogger<WorkOrderService> logger) : IWorkOrderService
+public class WorkOrderService(IDepotRepository depots, IWorkOrderRepository workOrders, IEngineerRepository engineers, IEngineerRouteRepository routes, ILogger<WorkOrderService> logger) : IWorkOrderService
 {
+    public async Task<List<EngineerOrderDto>?> GetByEngineerAsync(Guid engineerId, CancellationToken ct = default)
+    {
+        var engineer = await engineers.GetByIdAsync(engineerId, ct);
+        if (engineer is null)
+            return null;
+
+        var engineerRoutes = await routes.GetByEngineerAsync(engineerId, ct);
+        if (engineerRoutes.Count == 0)
+            return [];
+
+        var externalOrderIds = engineerRoutes
+            .SelectMany(r => r.Stops)
+            .Select(s => s.ExternalOrderId)
+            .Distinct();
+        var ordersByExternalId = (await workOrders.GetByExternalIdsAsync(externalOrderIds, ct))
+            .GroupBy(w => w.ExternalId)
+            .ToDictionary(g => g.Key, g => g.First());
+
+        var result = new List<EngineerOrderDto>();
+        foreach (var route in engineerRoutes.OrderBy(r => r.Id))
+        {
+            foreach (var stop in route.Stops.OrderBy(s => s.Sequence))
+            {
+                if (!ordersByExternalId.TryGetValue(stop.ExternalOrderId, out var order))
+                {
+                    logger.LogWarning(
+                        "Заявка {ExternalOrderId} из маршрута {RouteId} инженера {EngineerId} не найдена в БД.",
+                        stop.ExternalOrderId, route.Id, engineerId);
+                    continue;
+                }
+
+                result.Add(new EngineerOrderDto(
+                    route.Id,
+                    stop.Sequence,
+                    ToDto(order),
+                    stop.EstimatedArrival,
+                    stop.ServiceStart,
+                    stop.ServiceEnd,
+                    stop.AssignmentReason));
+            }
+        }
+
+        return result;
+    }
+
+    public async Task<List<WorkOrderDto>> GetAllAsync(CancellationToken ct = default)
+    {
+        var orders = await workOrders.GetAllAsync(ct);
+        return orders.Select(ToDto).ToList();
+    }
+
+    private static WorkOrderDto ToDto(WorkOrder o) => new(
+        o.Id,
+        o.ExternalId,
+        o.District,
+        o.Location?.RawAddress ?? string.Empty,
+        o.Location?.Coordinates.Latitude ?? 0.0,
+        o.Location?.Coordinates.Longitude ?? 0.0,
+        o.PreferredWindow.Start,
+        o.PreferredWindow.End,
+        (int)o.ServiceDuration.TotalMinutes,
+        o.RequiredSkill,
+        o.RequiredTransport,
+        o.Priority,
+        o.Status,
+        o.TaskType,
+        o.DepotId);
+
     public async Task<int> AddFromImportAsync(DepotDto depotDto, List<WorkOrderInputDto> orders, CancellationToken ct = default)
     {
         var district = orders

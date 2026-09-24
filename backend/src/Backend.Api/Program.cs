@@ -13,7 +13,9 @@ using Scalar.AspNetCore;
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
-builder.Services.AddControllers();
+builder.Services.AddControllers()
+    .AddJsonOptions(options =>
+        options.JsonSerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter()));
 builder.Services.AddOpenApi();
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {
@@ -38,10 +40,10 @@ builder.Services.AddRoutingEngine(valhallaUrl);
 
 builder.Services.AddScoped<ICsvParserService,  CsvParserService>();
 builder.Services.AddScoped<IEngineerCsvParser, EngineerCsvParser>();
-builder.Services.AddScoped<IGeocoder,  GeocoderService>();
 builder.Services.AddScoped<IDepotRepository, DepotRepository>();
 builder.Services.AddScoped<IWorkOrderRepository, WorkOrderRepository>();
 builder.Services.AddScoped<IEngineerRepository, EngineerRepository>();
+builder.Services.AddScoped<IEngineerRouteRepository, EngineerRouteRepository>();
 builder.Services.AddScoped<IOperationResultRepository, OperationResultRepository>();
 builder.Services.AddScoped<IWorkOrderService, WorkOrderService>();
 builder.Services.AddScoped<IEngineerService, EngineerService>();
@@ -68,6 +70,12 @@ builder.Services.AddCors(options =>
 });
 
 var app = builder.Build();
+
+using (var scope = app.Services.CreateScope())
+{
+    var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    dbContext.Database.Migrate();
+}
 
 // Configure the HTTP request pipeline.
 app.UseForwardedHeaders();

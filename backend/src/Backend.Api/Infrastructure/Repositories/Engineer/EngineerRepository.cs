@@ -8,6 +8,9 @@ public class EngineerRepository(AppDbContext db) : IEngineerRepository
     public async Task<Engineer?> GetByIdAsync(Guid id, CancellationToken ct = default)
         => await db.Engineers.AsNoTracking().FirstOrDefaultAsync(e => e.Id == id, ct);
 
+    public async Task<List<Engineer>> GetAllAsync(CancellationToken ct = default)
+        => await db.Engineers.AsNoTracking().ToListAsync(ct);
+
     public async Task<List<Engineer>> GetAvailableByDepotIdAsync(Guid depotId, CancellationToken ct = default)
         => await db.Engineers
             .AsNoTracking()

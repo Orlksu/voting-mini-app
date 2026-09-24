@@ -6,4 +6,6 @@ namespace Backend.Api.Services.WorkOrderService;
 public interface IWorkOrderService
 {
     Task<int> AddFromImportAsync(DepotDto depotDto, List<WorkOrderInputDto> orders, CancellationToken ct = default);
+    Task<List<WorkOrderDto>> GetAllAsync(CancellationToken ct = default);
+    Task<List<EngineerOrderDto>?> GetByEngineerAsync(Guid engineerId, CancellationToken ct = default);
 }

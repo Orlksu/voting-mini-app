@@ -1,7 +1,4 @@
 using Backend.Api.Services;
-using Backend.Api.Services.WorkOrderService;
-using Backend.Api.Services.CsvParserService;
-using Backend.Api.Services.GeoCodingService;
 using Backend.Contracts.Domain.Enums;
 using Backend.Contracts.Interfaces;
 using Backend.Contracts.Requests;
@@ -17,22 +14,15 @@ public class OptimizationController : ControllerBase
     private readonly IRouteOptimizer _optimizer;
     private readonly OptimizationJobStore _jobStore;
     private readonly ILogger<OptimizationController> _logger;
-    private readonly ICsvParserService  _csvParserService;
-    private readonly IGeocoder  _geocodingService;
-    private readonly IWorkOrderService _workOrderService;
 
     public OptimizationController(
         IRouteOptimizer optimizer,
         OptimizationJobStore jobStore,
-        ILogger<OptimizationController> logger, 
-        ICsvParserService csvParserService, IGeocoder  geocoder, IWorkOrderService workOrderService)
+        ILogger<OptimizationController> logger)
     {
         _optimizer = optimizer;
         _jobStore = jobStore;
         _logger = logger;
-        _csvParserService = csvParserService;
-        _geocodingService = geocoder;
-        _workOrderService = workOrderService;
     }
 
     /// <summary>
@@ -233,82 +223,4 @@ public class OptimizationController : ControllerBase
         return Ok(new CreateOptimizationPlanRequest(date, engineers, orders));
         
     }
-
-    [HttpPost("upload-csv")]
-    [Consumes("multipart/form-data")]
-    [ProducesResponseType(StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status400BadRequest)]
-public async Task<IActionResult> UploadOrdersCsv(List<IFormFile> files, CancellationToken ct)
-{
-    if (files == null || files.Count == 0)
-        return BadRequest("Файлы не выбраны.");
-
-    var totalUnresolvedCount = 0;
-    var processedFilesCount = 0;
-
-    foreach (var file in files)
-    {
-        if (file.Length == 0)
-            continue;
-
-        await using var stream = file.OpenReadStream();
-        var parseData = await _csvParserService.ParseOrderAsync(stream, ct);
-
-        if (parseData.Orders.Count == 0)
-            continue;
-        
-        DepotDto? finalDepot = null;
-        if (parseData.RawDepot != null && !string.IsNullOrWhiteSpace(parseData.RawDepot.Address))
-        {
-            var geoOffice = await _geocodingService.GeocodeAsync(parseData.RawDepot.Address, null, ct);
-            if (geoOffice != null)
-            {
-                var district = parseData.Orders[0].District ?? "Неизвестный район";
-                finalDepot = new DepotDto(district, parseData.RawDepot.Address, geoOffice.Latitude, geoOffice.Longitude);
-            }
-        }
-
-        if (finalDepot == null)
-        {
- 
-            return BadRequest($"Не удалось определить координаты офиса для файла {file.FileName}.");
-        }
-        var validOrders = new List<WorkOrderInputDto>();
-
-        foreach (var order in parseData.Orders)
-        {
-            if ((order.Latitude == null || order.Longitude == null) && !string.IsNullOrWhiteSpace(order.Address))
-            {
-                var geo = await _geocodingService.GeocodeAsync(order.Address, order.District, ct);
-                if (geo != null)
-                {
-                    order.Latitude = geo.Latitude;
-                    order.Longitude = geo.Longitude;
-                    validOrders.Add(order);
-                }
-                else
-                {
-                    totalUnresolvedCount++;
-                }
-            }
-            else if (order.Latitude != null && order.Longitude != null)
-            {
-                validOrders.Add(order);
-            }
-            else
-            {
-                totalUnresolvedCount++;
-            }
-        }
-        
-        await _workOrderService.AddFromImportAsync(finalDepot, validOrders, ct);
-        processedFilesCount++;
-    }
-
-    return Ok(new
-    {
-        ProcessedFiles = processedFilesCount,
-        UnresolvedAddressesCount = totalUnresolvedCount
-    });
-}
 }
