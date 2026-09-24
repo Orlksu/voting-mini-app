@@ -1,5 +1,8 @@
 import Map from 'react-map-gl/maplibre'
+import { setWorkerUrl } from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
+
+setWorkerUrl(new URL('maplibre-gl/dist/maplibre-gl-worker.mjs', import.meta.url).href)
 
 const mapTilerApiKey = import.meta.env.VITE_MAPTILER_API_KEY
 const mapStyle = mapTilerApiKey
