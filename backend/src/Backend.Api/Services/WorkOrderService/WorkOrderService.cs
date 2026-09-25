@@ -40,11 +40,13 @@ public class WorkOrderService(
         if (engineer is null)
             return null;
 
-        // 1. Поиск сохранённого маршрута в БД
+        // 1. Поиск сохранённого маршрута в БД (сортируем хронологически по времени первого визита)
         var engineerRoutes = await routes.GetByEngineerAsync(engineer.Id, ct);
         if (engineerRoutes.Count > 0)
         {
-            var route = engineerRoutes.OrderByDescending(r => r.Id).First();
+            var route = engineerRoutes
+                .OrderByDescending(r => r.Stops.Count > 0 ? r.Stops.Min(s => s.EstimatedArrival) : DateTimeOffset.MinValue)
+                .First();
             var polyline = !string.IsNullOrEmpty(route.EncodedPolyline)
                 ? route.EncodedPolyline
                 : (route.Stops.Count > 0
@@ -98,7 +100,20 @@ public class WorkOrderService(
             }
         }
 
-        return null;
+        // 3. Инженер найден в базе, но на смену у него 0 назначенных заявок -> возвращаем пустой маршрут (200 OK)
+        return new EngineerRouteDto(
+            engineer.ExternalId,
+            engineer.Name,
+            engineer.Transport,
+            0,
+            0.0,
+            0.0,
+            0,
+            [],
+            null,
+            engineer.StartLocation?.RawAddress,
+            engineer.StartLocation?.Coordinates.Latitude,
+            engineer.StartLocation?.Coordinates.Longitude);
     }
 
     public async Task<List<WorkOrderDto>> GetAllAsync(CancellationToken ct = default)

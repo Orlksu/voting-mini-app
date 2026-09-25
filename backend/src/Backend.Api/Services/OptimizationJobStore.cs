@@ -19,7 +19,8 @@ public class OptimizationJobStore
     private readonly ConcurrentDictionary<Guid, Job> _jobs = new();
 
     public List<EngineerInputDto>? LastEngineers { get; private set; }
-    public OptimizationResultDto? LastResult { get; private set; }
+    private volatile OptimizationResultDto? _lastResult;
+    public OptimizationResultDto? LastResult => _lastResult;
 
     public JobStatusResponseDto Create()
     {
@@ -46,7 +47,7 @@ public class OptimizationJobStore
         {
             job.Status = JobStatus.Completed;
             job.Result = result;
-            LastResult = result;
+            _lastResult = result;
             return true;
         }
         return false;
