@@ -1,15 +1,26 @@
-import Map from 'react-map-gl/maplibre'
 import { setWorkerUrl } from 'maplibre-gl'
+import type { FeatureCollection, Point } from 'geojson'
 import 'maplibre-gl/dist/maplibre-gl.css'
+import type { WorkOrder } from '../../types/workOrder.ts'
+import Map, { Layer, Source } from 'react-map-gl/maplibre'
+import { useState } from 'react'
 
-setWorkerUrl(new URL('maplibre-gl/dist/maplibre-gl-worker.mjs', import.meta.url).href)
+setWorkerUrl(
+  new URL('maplibre-gl/dist/maplibre-gl-worker.mjs', import.meta.url).href,
+)
 
 const mapTilerApiKey = import.meta.env.VITE_MAPTILER_API_KEY
 const mapStyle = mapTilerApiKey
   ? `https://api.maptiler.com/maps/basic-v2-dark/style.json?key=${mapTilerApiKey}`
   : undefined
 
-export function RoutingMap() {
+interface RoutingMapProps {
+  workOrders?: WorkOrder[]
+}
+
+export function RoutingMap({ workOrders }: RoutingMapProps) {
+  const [zoom, setZoom] = useState(11)
+
   if (!mapStyle) {
     return (
       <div role="alert">
@@ -18,15 +29,171 @@ export function RoutingMap() {
     )
   }
 
+  if (!workOrders) return null
+
+  const workOrdersGeoJson: FeatureCollection<Point> = {
+    type: 'FeatureCollection',
+    features: workOrders.map((workOrder) => ({
+      type: 'Feature',
+      properties: {
+        externalId: workOrder.externalId,
+        priority: workOrder.priority,
+      },
+      geometry: {
+        type: 'Point',
+        coordinates: [workOrder.longitude, workOrder.latitude],
+      },
+    })),
+  }
+
   return (
-    <Map
-      initialViewState={{
-        longitude: 37.6176,
-        latitude: 55.7558,
-        zoom: 11,
+    <div
+      style={{
+        position: 'relative',
+        width: '100%',
+        height: '100%',
       }}
-      mapStyle={mapStyle}
-      attributionControl={{}}
-    />
+    >
+      <Map
+        initialViewState={{
+          longitude: 37.6176,
+          latitude: 55.7558,
+          zoom: 11,
+        }}
+        mapStyle={mapStyle}
+        attributionControl={{}}
+        onMove={(event) => setZoom(event.viewState.zoom)}
+      >
+        <Source
+          id="work-orders"
+          type="geojson"
+          data={workOrdersGeoJson}
+          cluster
+          clusterMaxZoom={14}
+          clusterRadius={50}
+          clusterProperties={{
+            emergencyCount: [
+              '+',
+              [
+                'case',
+                ['==', ['get', 'priority'], 'Emergency'],
+                1,
+                0,
+              ],
+            ],
+          }}
+        >
+          <Layer
+            id="work-orders-clusters"
+            type="circle"
+            filter={['has', 'point_count']}
+            paint={{
+              'circle-radius': [
+                'step',
+                ['get', 'point_count'],
+                18,
+                10,
+                24,
+                50,
+                32,
+              ],
+              'circle-color': [
+                'interpolate',
+                ['linear'],
+                [
+                  '/',
+                  ['get', 'emergencyCount'],
+                  ['get', 'point_count'],
+                ],
+                0,
+                '#EABE5F',
+                0.5,
+                '#D86A32',
+                1,
+                '#B00F19',
+              ],
+              'circle-stroke-color': '#292929',
+              'circle-stroke-width': 2,
+            }}
+          />
+          <Layer
+            id="work-orders-cluster-count"
+            type="symbol"
+            filter={['has', 'point_count']}
+            layout={{
+              'text-field': ['get', 'point_count_abbreviated'],
+              'text-size': 13,
+            }}
+            paint={{
+              'text-color': '#292929',
+            }}
+          />
+          <Layer
+            id="work-orders-points"
+            type="circle"
+            filter={['!', ['has', 'point_count']]}
+            paint={{
+              'circle-radius': [
+                'interpolate',
+                ['linear'],
+                ['zoom'],
+                10,
+                5,
+                15,
+                7,
+                16,
+                12,
+                18,
+                18,
+              ],
+              'circle-color': [
+                'match',
+                ['get', 'priority'],
+                'Emergency',
+                '#B00F19',
+                '#EABE5F',
+              ],
+              'circle-stroke-color': '#000000',
+              'circle-stroke-width': 2,
+            }}
+          />
+        </Source>
+        <Layer
+          id="house-numbers"
+          type="symbol"
+          source="maptiler_planet"
+          source-layer="housenumber"
+          minzoom={11}
+          layout={{
+            'text-field': ['get', 'housenumber'],
+            'text-size': 9,
+            'text-allow-overlap': false,
+          }}
+          paint={{
+            'text-color': '#ffffff',
+            'text-halo-color': '#292929',
+            'text-halo-width': 1.5,
+          }}
+        />
+      </Map>
+
+      <div
+        style={{
+          position: 'absolute',
+          left: 16,
+          bottom: 16,
+          zIndex: 2,
+          padding: '6px 10px',
+          borderRadius: 6,
+          color: '#ffffff',
+          background: 'rgb(41 41 41 / 0.85)',
+          fontFamily: 'var(--font-mono)',
+          fontSize: 12,
+          pointerEvents: 'none',
+        }}
+      >
+        Zoom: {zoom.toFixed(2)}
+      </div>
+    </div>
   )
 }
