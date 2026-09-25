@@ -69,7 +69,7 @@ public class EngineerRepository(AppDbContext db) : IEngineerRepository
         await db.SaveChangesAsync(ct);
     }
     public async Task<int> DeleteEngineerAsync(string externalId, CancellationToken ct = default)
-        => await db.Engineers.Where(e => e.ExternalId == externalId).ExecuteDeleteAsync();
+        => await db.Engineers.Where(e => e.ExternalId == externalId).ExecuteDeleteAsync(ct);
 
     public async Task UpdateAvailabilityAsync(Guid engineerId, bool isAvailable, CancellationToken ct = default)
         => await db.Engineers

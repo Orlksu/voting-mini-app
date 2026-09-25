@@ -35,11 +35,11 @@ public class EngineerService(IDepotRepository depots, IEngineerRepository engine
 
     public async Task<Engineer> AddAsync(string district, EngineerInputDto engineer, CancellationToken ct = default)
     {
-        var depot = await depots.GetOrCreateAsync(
-            district,
+        var depot = await depots.GetOrCreateByLocationAsync(
             engineer.StartAddress,
             engineer.StartLatitude ?? 0.0,
             engineer.StartLongitude ?? 0.0,
+            district,
             ct);
 
         var entity = new Engineer
@@ -64,12 +64,40 @@ public class EngineerService(IDepotRepository depots, IEngineerRepository engine
         return entity;
     }
 
-    public async Task<List<Engineer>> AddRangeAsync(string district, IEnumerable<EngineerInputDto> engineers, CancellationToken ct = default)
+    public async Task<List<Engineer>> AddRangeAsync(string district, IEnumerable<EngineerInputDto> engineersList, CancellationToken ct = default)
     {
-        var result = new List<Engineer>();
-        foreach (var engineer in engineers)
-            result.Add(await AddAsync(district, engineer, ct));
-        return result;
+        var dtoList = engineersList.ToList();
+        if (dtoList.Count == 0)
+            return [];
+
+        var firstWithCoords = dtoList.FirstOrDefault(e => e.StartLatitude.HasValue && e.StartLongitude.HasValue) ?? dtoList[0];
+        var depot = await depots.GetOrCreateByLocationAsync(
+            firstWithCoords.StartAddress,
+            firstWithCoords.StartLatitude ?? 0.0,
+            firstWithCoords.StartLongitude ?? 0.0,
+            district,
+            ct);
+
+        var entities = dtoList.Select(e => new Engineer
+        {
+            ExternalId = e.ExternalId,
+            Name = e.Name,
+            District = district,
+            DepotId = depot.Id,
+            StartLocation = depot.Location ?? new Location
+            {
+                RawAddress = e.StartAddress,
+                Coordinates = new GeoCoordinate(e.StartLatitude ?? 0.0, e.StartLongitude ?? 0.0),
+            },
+            Shift = new TimeWindow(e.ShiftStart.ToUniversalTime(), e.ShiftEnd.ToUniversalTime()),
+            Transport = e.Transport,
+            Skills = [.. e.Skills],
+            IsAvailable = true,
+            MaxOrdersPerShift = e.MaxOrdersPerShift,
+        }).ToList();
+
+        await engineers.UpsertRangeAsync(entities, ct);
+        return entities;
     }
 
     public async Task<EngineerImportResultDto> ImportEngineersAsync(List<EngineerCsvRowDto> rawEngineers, CancellationToken ct = default)
@@ -80,10 +108,23 @@ public class EngineerService(IDepotRepository depots, IEngineerRepository engine
         var unresolved = 0;
         var depotsCreated = 0;
 
-        var todayUtc = DateTimeOffset.UtcNow;
         var seenExternalIds = new HashSet<string>();
-        var districtDepots = new Dictionary<string, Depot>();
+        var locationDepots = new Dictionary<string, Depot>(StringComparer.OrdinalIgnoreCase);
+        var resolvedStartLocations = new Dictionary<string, Location?>(StringComparer.OrdinalIgnoreCase);
         var entities = new List<Engineer>();
+
+        // Пакетный предрасчет координат для всех уникальных адресов старта файла
+        var addressesNeedingGeo = rawEngineers
+            .Where(r => !string.IsNullOrWhiteSpace(r.StartAddress) 
+                     && (ParseCoordinate(r.StartLatitude) == null || ParseCoordinate(r.StartLongitude) == null))
+            .Select(r => (Address: r.StartAddress.Trim(), District: (string?)r.District?.Trim()))
+            .Distinct()
+            .ToList();
+
+        if (addressesNeedingGeo.Count > 0)
+        {
+            await geocoder.GeocodeBatchAsync(addressesNeedingGeo, ct);
+        }
 
         foreach (var raw in rawEngineers)
         {
@@ -103,18 +144,13 @@ public class EngineerService(IDepotRepository depots, IEngineerRepository engine
 
             var district = string.IsNullOrWhiteSpace(raw.District) ? "Неизвестный район" : raw.District.Trim();
 
-            if (!districtDepots.TryGetValue(district, out var depot))
+            var addrKey = $"{district}|{raw.StartAddress?.Trim()}|{raw.StartLatitude?.Trim()}|{raw.StartLongitude?.Trim()}";
+            if (!resolvedStartLocations.TryGetValue(addrKey, out var startLocation))
             {
-                depot = await depots.GetByDistrictAsync(district, ct);
-                if (depot is null)
-                {
-                    depot = await depots.EnsureExistsAsync(district, ct);
-                    depotsCreated++;
-                }
-                districtDepots[district] = depot;
+                startLocation = await ResolveStartLocationAsync(raw, district, ct);
+                resolvedStartLocations[addrKey] = startLocation;
             }
 
-            var startLocation = await ResolveStartLocationAsync(raw, depot, ct);
             if (startLocation is null)
             {
                 warnings.Add($"Не удалось определить координаты старта для инженера '{externalId}' — пропущено.");
@@ -122,8 +158,27 @@ public class EngineerService(IDepotRepository depots, IEngineerRepository engine
                 continue;
             }
 
-            var shiftStart = ParseShift(raw.ShiftStart, todayUtc);
-            var shiftEnd = ParseShift(raw.ShiftEnd, todayUtc);
+            var depotKey = $"{startLocation.RawAddress}|{startLocation.Coordinates.Latitude:F4}|{startLocation.Coordinates.Longitude:F4}";
+            if (!locationDepots.TryGetValue(depotKey, out var depot))
+            {
+                var existingDepot = await depots.GetByDistrictAsync(district, ct);
+                depot = await depots.GetOrCreateByLocationAsync(
+                    startLocation.RawAddress,
+                    startLocation.Coordinates.Latitude,
+                    startLocation.Coordinates.Longitude,
+                    district,
+                    ct);
+
+                if (existingDepot is null)
+                {
+                    depotsCreated++;
+                }
+
+                locationDepots[depotKey] = depot;
+            }
+
+            var shiftStart = ParseShift(raw.ShiftStart);
+            var shiftEnd = ParseShift(raw.ShiftEnd);
             if (shiftStart is null || shiftEnd is null)
             {
                 warnings.Add($"Невалидный формат времени смены у инженера '{externalId}' — пропущено.");
@@ -132,7 +187,7 @@ public class EngineerService(IDepotRepository depots, IEngineerRepository engine
             }
 
             if (shiftEnd.Value <= shiftStart.Value)
-                shiftEnd = shiftStart.Value.AddDays(1);
+                shiftEnd = shiftEnd.Value.AddDays(1);
 
             var transport = ParseTransport(raw.Transport);
             if (transport is null)
@@ -173,7 +228,7 @@ public class EngineerService(IDepotRepository depots, IEngineerRepository engine
         var engineer = await engineers.GetByExternalIdAsync(externalId, ct);
         return engineer is null ? null : ToDto(engineer);
     }
-    private async Task<Location?> ResolveStartLocationAsync(EngineerCsvRowDto raw, Depot depot, CancellationToken ct)
+    private async Task<Location?> ResolveStartLocationAsync(EngineerCsvRowDto raw, string district, CancellationToken ct)
     {
         var lat = ParseCoordinate(raw.StartLatitude);
         var lon = ParseCoordinate(raw.StartLongitude);
@@ -181,7 +236,7 @@ public class EngineerService(IDepotRepository depots, IEngineerRepository engine
         {
             return new Location
             {
-                RawAddress = string.IsNullOrWhiteSpace(raw.StartAddress) ? depot.Location?.RawAddress ?? string.Empty : raw.StartAddress.Trim(),
+                RawAddress = string.IsNullOrWhiteSpace(raw.StartAddress) ? district : raw.StartAddress.Trim(),
                 Coordinates = new GeoCoordinate(lat.Value, lon.Value),
             };
         }
@@ -198,41 +253,34 @@ public class EngineerService(IDepotRepository depots, IEngineerRepository engine
                 };
             }
 
-            return null;
-        }
-
-        return depot.Location is null
-            ? null
-            : new Location
+            var existingDepot = await depots.GetByDistrictAsync(district, ct);
+            if (existingDepot?.Location != null)
             {
-                RawAddress = depot.Location.RawAddress,
-                Coordinates = depot.Location.Coordinates,
-            };
-    }
+                return new Location
+                {
+                    RawAddress = raw.StartAddress.Trim(),
+                    Coordinates = existingDepot.Location.Coordinates,
+                };
+            }
 
-    private static DateTimeOffset? ParseShift(string value, DateTimeOffset todayUtc)
-    {
-        if (string.IsNullOrWhiteSpace(value))
             return null;
-
-        var text = value.Trim();
-
-        if (TimeSpan.TryParse(text, CultureInfo.InvariantCulture, out var time))
-        {
-            var utcMidnight = new DateTime(
-                todayUtc.Year, todayUtc.Month, todayUtc.Day,
-                0, 0, 0, DateTimeKind.Utc);
-            return new DateTimeOffset(utcMidnight + time, TimeSpan.Zero);
         }
 
-        if (DateTimeOffset.TryParse(text, CultureInfo.GetCultureInfo("ru-RU"), DateTimeStyles.None, out var dto))
-            return dto.ToUniversalTime();
-
-        if (DateTime.TryParse(text, CultureInfo.GetCultureInfo("ru-RU"), DateTimeStyles.None, out var dt))
-            return new DateTimeOffset(dt, TimeSpan.Zero);
+        var fallbackDepot = await depots.GetByDistrictAsync(district, ct);
+        if (fallbackDepot?.Location != null)
+        {
+            return new Location
+            {
+                RawAddress = fallbackDepot.Location.RawAddress,
+                Coordinates = fallbackDepot.Location.Coordinates,
+            };
+        }
 
         return null;
     }
+
+    private static DateTimeOffset? ParseShift(string value) =>
+        Backend.Api.Services.Common.DateTimeParserHelper.ParseMskDateTimeToUtc(value);
 
     private static TransportType? ParseTransport(string value)
     {

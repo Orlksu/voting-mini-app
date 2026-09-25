@@ -20,8 +20,13 @@ public class OperationResultRepository(AppDbContext db) : IOperationResultReposi
             .FirstOrDefaultAsync(x => x.Id == id, ct);
 
     public async Task<List<OperationResult>> GetHistoryByDateAsync(DateTimeOffset date, CancellationToken ct = default)
-        => await db.OperationResults
+    {
+        var start = new DateTimeOffset(date.Year, date.Month, date.Day, 0, 0, 0, date.Offset).ToUniversalTime();
+        var end = start.AddDays(1);
+
+        return await db.OperationResults
             .AsNoTracking()
-            .Where(x => x.PlanDate.Date == date.Date)
+            .Where(x => x.PlanDate >= start && x.PlanDate < end)
             .ToListAsync(ct);
+    }
 }

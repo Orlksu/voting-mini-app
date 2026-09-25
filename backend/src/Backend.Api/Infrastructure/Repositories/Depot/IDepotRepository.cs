@@ -7,5 +7,6 @@ public interface IDepotRepository
     Task<Depot?> GetByIdAsync(Guid id, CancellationToken ct = default);
     Task<Depot?> GetByDistrictAsync(string district, CancellationToken ct = default);
     Task<Depot> GetOrCreateAsync(string district, string address, double lat, double lon, CancellationToken ct = default);
+    Task<Depot> GetOrCreateByLocationAsync(string address, double lat, double lon, string fallbackDistrict, CancellationToken ct = default);
     Task<Depot> EnsureExistsAsync(string district, CancellationToken ct = default);
 } 

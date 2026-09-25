@@ -175,6 +175,8 @@ namespace Backend.Api.Infrastructure.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("EngineerId");
+
                     b.HasIndex("OperationResultId");
 
                     b.ToTable("EngineerRoutes");
@@ -366,6 +368,7 @@ namespace Backend.Api.Infrastructure.Migrations
                         .HasColumnType("uuid");
 
                     b.Property<string>("District")
+                        .IsRequired()
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)");
 
@@ -433,8 +436,14 @@ namespace Backend.Api.Infrastructure.Migrations
 
                     b.HasIndex("DepotId");
 
+                    b.HasIndex("Status");
+
                     b.HasIndex("ExternalId", "District")
                         .IsUnique();
+
+                    b.HasIndex("Status", "DepotId");
+
+                    b.HasIndex("Status", "District");
 
                     b.ToTable("WorkOrders");
                 });
