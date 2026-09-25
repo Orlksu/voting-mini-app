@@ -4,4 +4,6 @@ dist
 .idea
 .DS_Store
 npm-debug.log*
-.env*.local
+# Исключаем все .env* из build context: VITE_*-переменные передаются только
+# через --build-arg, а случайный .env/.env.staging не должен попасть в образ.
+.env*

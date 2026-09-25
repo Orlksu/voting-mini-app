@@ -68,6 +68,7 @@ workflows:
               - |
                 ssh -i "$HOME/.ssh/staging_key" \
                   -o IdentitiesOnly=yes \
+                  -o BatchMode=yes \
                   "$STAGING_USER@$STAGING_HOST" 'bash -se' <<'REMOTE'
                 set -Eeuo pipefail
                 cd "$HOME/case-13-field-engineer-routing-team-97"
@@ -83,8 +84,12 @@ workflows:
                   -f docker-compose.yml \
                   -f docker-compose.staging.yml \
                   up -d --build --force-recreate --remove-orphans
-                frontend_port="${STAGING_FRONTEND_PORT:-8080}"
-                backend_port="${STAGING_BACKEND_PORT:-5001}"
+                # Порты health-проверок берём из .env.staging на VM, а не
+                # хардкодим: иначе при смене портов проверка уйдёт не туда.
+                frontend_port="$(sed -n 's/^STAGING_FRONTEND_PORT=//p' .env.staging | tail -n1)"
+                backend_port="$(sed -n 's/^STAGING_BACKEND_PORT=//p' .env.staging | tail -n1)"
+                frontend_port="${frontend_port:-8080}"
+                backend_port="${backend_port:-5001}"
                 curl --fail --silent --show-error --retry 40 --retry-delay 3 \
                   --retry-all-errors --retry-max-time 180 \
                   "http://127.0.0.1:${backend_port}/healthz" >/dev/null
