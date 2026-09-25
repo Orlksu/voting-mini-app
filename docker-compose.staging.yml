@@ -19,7 +19,9 @@ services:
       POSTGRES_USER: "${POSTGRES_USER:-user}"
       POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}"
       POSTGRES_DB: "${POSTGRES_DB:-lctdb}"
-    ports: []
+    # !reset: пустой список ports в override НЕ убирает порты из базового
+    # файла (списки конкатенируются), иначе PostgreSQL публикуется наружу.
+    ports: !reset []
 
   valhalla:
-    ports: []
+    ports: !reset []

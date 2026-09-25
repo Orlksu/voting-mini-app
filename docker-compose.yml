@@ -46,7 +46,9 @@ services:
       retries: 5
 
   valhalla:
-    image: ghcr.io/gis-ops/docker-valhalla/valhalla:latest
+    # Пин фиксированной версии: latest — плавающий тег, повторный
+    # `up -d --build` может молча подтянуть другую версию движка.
+    image: ghcr.io/gis-ops/docker-valhalla/valhalla:3.5.1
     container_name: lct-valhalla
     platform: linux/amd64
     restart: unless-stopped
