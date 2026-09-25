@@ -42,16 +42,16 @@ public class EngineersController(IEngineerCsvParser csvParser, IEngineerService 
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> Delete(string id, CancellationToken ct)
     {
-        var deleted = await engineerService.DeleteEngineerAsync(id, ct);
+        var deleted = await engineerService.DeleteEngineerByIdentifierAsync(id, ct);
         return deleted ? NoContent() : NotFound("Инженер не найден.");
     }
 
     [HttpGet("{id}")]
-    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType<EngineerDto>(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> GetEngineerById(string id, CancellationToken ct)
     {
-        var engineer = await engineerService.GetEngineerByExternalIdAsync(id, ct);
+        var engineer = await engineerService.GetEngineerByIdentifierAsync(id, ct);
         return engineer is null ? NotFound("Инженер не найден.") : Ok(engineer);
     }
 }
