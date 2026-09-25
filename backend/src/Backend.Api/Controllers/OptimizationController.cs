@@ -204,6 +204,7 @@ public class OptimizationController : ControllerBase
             new WorkOrderInputDto
             {
                 ExternalId = "ORD-101",
+                Depot = new DepotDto("Диспетчерская", "г. Москва, ул. Тверская, 7", 55.7576, 37.6111),
                 Address = "г. Москва, ул. Арбат, 15",
                 Latitude = 55.7505,
                 Longitude = 37.5942,
@@ -218,6 +219,7 @@ public class OptimizationController : ControllerBase
             new WorkOrderInputDto
             {
                 ExternalId = "ORD-102",
+                Depot = new DepotDto("Диспетчерская", "г. Москва, ул. Тверская, 7", 55.7576, 37.6111),
                 Address = "г. Москва, ул. Сретенка, 24",
                 Latitude = 55.7698,
                 Longitude = 37.6331,

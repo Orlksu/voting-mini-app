@@ -1,36 +1,39 @@
+using Backend.Contracts.Domain.Enums;
 using Backend.Contracts.Interfaces;
 using Backend.Contracts.Requests;
 using Backend.Contracts.Responses;
-using Backend.Contracts.Domain.Enums;
 
 namespace Backend.RoutingEngine.Services;
 
 /// <summary>
-/// Заглушка оптимизатора для параллельной работы фронтенда и API разработчика.
-/// Возвращает реалистичные распределённые маршруты.
+/// Заглушка оптимизатора (fallback при сбое OR-Tools).
+/// Возвращает правдоподобные маршруты, НО в отличие от прошлой версии
+/// не нарушает жёсткие ограничения: заявка назначается бригаде только при
+/// совпадении навыка и транспорта; несовместимые заявки уходят в неназначенные.
 /// </summary>
 public class MockRouteOptimizer : IRouteOptimizer
 {
-    public Task<OptimizationResultDto> OptimizeAsync(CreateOptimizationPlanRequest request, CancellationToken cancellationToken = default)
+    public Task<OptimizationResultDto> OptimizeAsync(
+        CreateOptimizationPlanRequest request,
+        CancellationToken cancellationToken = default)
     {
-        var routes = new List<EngineerRouteDto>();
         var orders = request.Orders;
         var engineers = request.Engineers;
+        var unassigned = new List<UnassignedOrderDto>();
+        var routes = new List<EngineerRouteDto>();
 
         if (engineers.Count == 0 || orders.Count == 0)
         {
-            var unassigned = orders
-                .Select(o => new UnassignedOrderDto(
-                    o.ExternalId,
-                    o.Address,
-                    UnassignedReasonCode.NoQualifiedEngineer,
-                    "В смене нет доступных исполнителей"))
-                .ToList();
+            unassigned.AddRange(orders.Select(o => new UnassignedOrderDto(
+                o.ExternalId,
+                o.Address,
+                UnassignedReasonCode.NoQualifiedEngineer,
+                "В смене нет доступных исполнителей")));
 
             return Task.FromResult(new OptimizationResultDto(
-                PlanId: Guid.NewGuid(),
-                PlanDate: request.PlanDate,
-                Metrics: new PlanComparisonMetricsDto(
+                Guid.NewGuid(),
+                request.PlanDate,
+                new PlanComparisonMetricsDto(
                     TotalOrders: orders.Count,
                     AssignedOrders: 0,
                     UnassignedOrders: orders.Count,
@@ -40,17 +43,32 @@ public class MockRouteOptimizer : IRouteOptimizer
                     OptimizedTotalDistanceKm: 0,
                     BaselineTotalDistanceKm: 0,
                     DistanceEconomyPercent: 0),
-                Routes: routes,
-                UnassignedOrders: unassigned));
+                routes,
+                unassigned));
         }
 
-        // Простейшее распределение заявок по кругу между доступными инженерами
+        // Простейшее распределение по кругу между совместимыми инженерами
         int engineerIndex = 0;
         var engineerOrdersMap = engineers.ToDictionary(e => e.ExternalId, _ => new List<WorkOrderInputDto>());
 
         foreach (var order in orders)
         {
+            if (engineers.Count == 0) break;
+
             var engineer = engineers[engineerIndex % engineers.Count];
+            bool compatible = HasSkill(engineer, order.RequiredSkill)
+                              && (order.RequiredTransport == null || engineer.Transport == order.RequiredTransport);
+
+            if (!compatible)
+            {
+                unassigned.Add(new UnassignedOrderDto(
+                    order.ExternalId,
+                    order.Address,
+                    UnassignedReasonCode.NoQualifiedEngineer,
+                    "Fallback: нет совместимого инженера по навыку/транспорту"));
+                continue;
+            }
+
             engineerOrdersMap[engineer.ExternalId].Add(order);
             engineerIndex++;
         }
@@ -58,6 +76,7 @@ public class MockRouteOptimizer : IRouteOptimizer
         double totalDistance = 0;
         int totalTravelMinutes = 0;
         int activeEngineers = 0;
+        int assignedCount = 0;
 
         foreach (var engineer in engineers)
         {
@@ -68,6 +87,7 @@ public class MockRouteOptimizer : IRouteOptimizer
             }
 
             activeEngineers++;
+            assignedCount += assignedOrders.Count;
             var stops = new List<RouteStopDto>();
             var currentTime = engineer.ShiftStart.AddMinutes(15);
 
@@ -117,7 +137,8 @@ public class MockRouteOptimizer : IRouteOptimizer
                 BaselineDistanceKm: Math.Round(engDistance * 1.1, 2),
                 TotalTravelMinutes: engTravelTime,
                 Stops: stops,
-                EncodedPolyline: null));
+                EncodedPolyline: null,
+                BreakStops: []));
 
             totalDistance += engDistance;
             totalTravelMinutes += engTravelTime;
@@ -129,21 +150,24 @@ public class MockRouteOptimizer : IRouteOptimizer
             : 0;
 
         var response = new OptimizationResultDto(
-            PlanId: Guid.NewGuid(),
-            PlanDate: request.PlanDate,
-            Metrics: new PlanComparisonMetricsDto(
+            Guid.NewGuid(),
+            request.PlanDate,
+            new PlanComparisonMetricsDto(
                 TotalOrders: orders.Count,
-                AssignedOrders: routes.Sum(r => r.TotalOrders),
-                UnassignedOrders: 0,
+                AssignedOrders: assignedCount,
+                UnassignedOrders: unassigned.Count,
                 OptimizedActiveEngineers: activeEngineers,
                 BaselineActiveEngineers: activeEngineers,
                 SavedEngineersCount: 0,
                 OptimizedTotalDistanceKm: Math.Round(totalDistance, 2),
                 BaselineTotalDistanceKm: baselineDistance,
                 DistanceEconomyPercent: economyPercent),
-            Routes: routes,
-            UnassignedOrders: []);
+            routes,
+            unassigned);
 
         return Task.FromResult(response);
     }
+
+    private static bool HasSkill(EngineerInputDto engineer, SkillType requiredSkill)
+        => engineer.Skills != null && engineer.Skills.Contains(requiredSkill);
 }

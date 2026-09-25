@@ -12,5 +12,8 @@ public record EngineerInputDto(
     DateTimeOffset ShiftEnd,
     TransportType Transport,
     List<SkillType> Skills,
-    int MaxOrdersPerShift = 15
+    int MaxOrdersPerShift = 15,
+    DateTimeOffset? LunchStart = null,
+    DateTimeOffset? LunchEnd = null,
+    int LunchDurationMinutes = 60
 );

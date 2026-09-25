@@ -19,4 +19,6 @@ public record WorkOrderInputDto
     public OrderPriority Priority { get; set; }
     public string TaskType { get; set; } = string.Empty;
     public int DurationMinutes { get; set; } = 30;
+    /// <summary>Статус заявки. Завершённые/отменённые заявки в планирование не попадают.</summary>
+    public OrderStatus Status { get; set; } = OrderStatus.NotDispatched;
 }

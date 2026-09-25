@@ -18,6 +18,7 @@ public static class DependencyInjection
 
         services.AddScoped<OrToolsVrpSolver>();
         services.AddScoped<MockRouteOptimizer>();
+        services.AddSingleton<IRouteMatrixProvider, HaversineMatrixProvider>();
         services.AddScoped<IRouteOptimizer, RouteOptimizer>();
         return services;
     }

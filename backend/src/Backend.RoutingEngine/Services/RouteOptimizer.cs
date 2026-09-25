@@ -10,27 +10,61 @@ public class RouteOptimizer : IRouteOptimizer
 {
     private readonly OrToolsVrpSolver _solver;
     private readonly MockRouteOptimizer _mockFallback;
+    private readonly IRouteMatrixProvider _matrixProvider;
     private readonly ILogger<RouteOptimizer> _logger;
 
-    public RouteOptimizer(ILogger<RouteOptimizer> logger)
+    public RouteOptimizer(
+        OrToolsVrpSolver solver,
+        MockRouteOptimizer mockFallback,
+        IRouteMatrixProvider matrixProvider,
+        ILogger<RouteOptimizer> logger)
     {
+        _solver = solver;
+        _mockFallback = mockFallback;
+        _matrixProvider = matrixProvider;
         _logger = logger;
-        _solver = new OrToolsVrpSolver();
-        _mockFallback = new MockRouteOptimizer();
     }
 
-    public async Task<OptimizationResultDto> OptimizeAsync(CreateOptimizationPlanRequest request, CancellationToken cancellationToken = default)
+    public async Task<OptimizationResultDto> OptimizeAsync(
+        CreateOptimizationPlanRequest request,
+        CancellationToken cancellationToken = default)
     {
         _logger.LogInformation("Starting route optimization for {EngineerCount} engineers and {OrderCount} orders",
             request.Engineers.Count, request.Orders.Count);
 
         try
         {
-            var result = _solver.Solve(request);
-            if (result != null)
+            // 1. Предобработка: отсев некорректных/закрытых заявок, нормализация длительностей.
+            var preprocess = PlanPreprocessor.Preprocess(request);
+
+            if (preprocess.Engineers.Count == 0 || preprocess.Orders.Count == 0)
             {
-                return result;
+                return OrToolsVrpSolver.BuildEmptyResult(request.PlanDate, preprocess.Engineers, preprocess.Orders, preprocess.Unassigned);
             }
+
+            // 2. Матрицы расстояний/времени (Фаза A: Haversine; Фаза B: Valhalla).
+            var locations = PlanPreprocessor.BuildLocations(preprocess.Engineers, preprocess.Orders);
+            var matrices = await _matrixProvider.BuildAsync(locations, cancellationToken);
+
+            // 3. Каскадные окна обедов (пока одни едят — другие работают).
+            var lunchWindows = preprocess.Engineers
+                .Select((engineer, index) => LunchPolicy.Resolve(engineer, index, preprocess.Engineers.Count))
+                .ToList();
+
+            // 4. Ядро оптимизации.
+            var result = _solver.Solve(
+                preprocess.Engineers,
+                preprocess.Orders,
+                lunchWindows,
+                matrices,
+                preprocess.Unassigned,
+                request.TimeLimitSeconds);
+
+            return result;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch (Exception ex)
         {
