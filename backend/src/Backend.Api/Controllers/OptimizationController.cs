@@ -1,4 +1,6 @@
+using Backend.Api.Infrastructure.Repositories;
 using Backend.Api.Services;
+using Backend.Contracts.Domain.Entities;
 using Backend.Contracts.Domain.Enums;
 using Backend.Contracts.Interfaces;
 using Backend.Contracts.Requests;
@@ -13,30 +15,49 @@ public class OptimizationController : ControllerBase
 {
     private readonly IRouteOptimizer _optimizer;
     private readonly OptimizationJobStore _jobStore;
+    private readonly IEngineerRepository _engineers;
+    private readonly IWorkOrderRepository _workOrders;
     private readonly ILogger<OptimizationController> _logger;
 
     public OptimizationController(
         IRouteOptimizer optimizer,
         OptimizationJobStore jobStore,
+        IEngineerRepository engineers,
+        IWorkOrderRepository workOrders,
         ILogger<OptimizationController> logger)
     {
         _optimizer = optimizer;
         _jobStore = jobStore;
+        _engineers = engineers;
+        _workOrders = workOrders;
         _logger = logger;
     }
 
     /// <summary>
-    /// Постановка задачи в очередь расчета
+    /// Постановка задачи в очередь расчета на реальных данных из БД:
+    /// все доступные инженеры и все нераспределённые заявки.
     /// </summary>
     [HttpPost("jobs")]
     [ProducesResponseType<JobStatusResponseDto>(StatusCodes.Status202Accepted)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    public ActionResult<JobStatusResponseDto> CreateJob([FromBody] CreateOptimizationPlanRequest request)
+    public async Task<ActionResult<JobStatusResponseDto>> CreateJob(CancellationToken ct)
     {
-        if (request.Engineers.Count == 0 || request.Orders.Count == 0)
-        {
-            return BadRequest("Список инженеров и заявок не может быть пустым.");
-        }
+        var engineers = (await _engineers.GetAllAsync(ct))
+            .Where(e => e.IsAvailable)
+            .Select(ToEngineerInputDto)
+            .ToList();
+
+        var orders = (await _workOrders.GetAllAsync(ct))
+            .Where(o => o.Status == OrderStatus.NotDispatched)
+            .Select(ToWorkOrderInputDto)
+            .ToList();
+
+        if (engineers.Count == 0)
+            return BadRequest("Нет доступных инженеров для оптимизации (проверьте /api/v1/engineers).");
+        if (orders.Count == 0)
+            return BadRequest("Нет нераспределённых заявок (проверьте /api/v1/workorders).");
+
+        var request = new CreateOptimizationPlanRequest(DateTimeOffset.UtcNow, engineers, orders);
 
         _jobStore.SetLastEngineers(request.Engineers);
         var job = _jobStore.Create();
@@ -156,71 +177,33 @@ public class OptimizationController : ControllerBase
         return new CreateOptimizationPlanRequest(request.EventTime, updatedEngineers, orders);
     }
 
-    [HttpGet("sample-request")]
-    [ProducesResponseType<CreateOptimizationPlanRequest>(StatusCodes.Status200OK)]
-    public ActionResult<CreateOptimizationPlanRequest> GetSampleRequest()
-    {
-        var date = DateTimeOffset.UtcNow.Date.AddHours(9);
-        var engineers = new List<EngineerInputDto>
-        {
-            new(
-                ExternalId: "ENG-01",
-                Name: "Иван Смирнов",
-                StartAddress: "г. Москва, ул. Тверская, 7",
-                StartLatitude: 55.7576,
-                StartLongitude: 37.6111,
-                ShiftStart: date,
-                ShiftEnd: date.AddHours(9),
-                Transport: TransportType.Car,
-                Skills: [SkillType.Installation, SkillType.LocalRepair],
-                MaxOrdersPerShift: 10
-            ),
-            new(
-                ExternalId: "ENG-02",
-                Name: "Алексей Новиков",
-                StartAddress: "г. Москва, пр-т Мира, 40",
-                StartLatitude: 55.7820,
-                StartLongitude: 37.6334,
-                ShiftStart: date,
-                ShiftEnd: date.AddHours(9),
-                Transport: TransportType.PublicTransit,
-                Skills: [SkillType.LocalRepair, SkillType.Emergency],
-                MaxOrdersPerShift: 8
-            )
-        };
+    private static EngineerInputDto ToEngineerInputDto(Engineer e) => new(
+        e.ExternalId,
+        e.Name,
+        e.StartLocation.RawAddress,
+        e.StartLocation.Coordinates.Latitude,
+        e.StartLocation.Coordinates.Longitude,
+        e.Shift.Start,
+        e.Shift.End,
+        e.Transport,
+        [.. e.Skills],
+        e.MaxOrdersPerShift);
 
-        var orders = new List<WorkOrderInputDto>
-        {
-            new WorkOrderInputDto
-            {
-                ExternalId = "ORD-101",
-                Address = "г. Москва, ул. Арбат, 15",
-                Latitude = 55.7505,
-                Longitude = 37.5942,
-                WindowStart = date.AddHours(1),
-                WindowEnd = date.AddHours(3),
-                RequiredSkill = SkillType.Installation,
-                RequiredTransport = TransportType.Car,
-                Priority = OrderPriority.High,
-                TaskType = "Подключение клиента",
-                DurationMinutes = 70
-            },
-            new WorkOrderInputDto
-            {
-                ExternalId = "ORD-102",
-                Address = "г. Москва, ул. Сретенка, 24",
-                Latitude = 55.7698,
-                Longitude = 37.6331,
-                WindowStart = date.AddHours(2),
-                WindowEnd = date.AddHours(4),
-                RequiredSkill = SkillType.LocalRepair,
-                RequiredTransport = null,
-                Priority = OrderPriority.Normal,
-                TaskType = "Ремонт оборудования",
-                DurationMinutes = 30
-            }
-        };
-        return Ok(new CreateOptimizationPlanRequest(date, engineers, orders));
-        
-    }
+    private static WorkOrderInputDto ToWorkOrderInputDto(WorkOrder o) => new()
+    {
+        ExternalId = o.ExternalId,
+        District = o.District,
+        Depot = new DepotDto(o.District, o.Location?.RawAddress ?? string.Empty,
+            o.Location?.Coordinates.Latitude ?? 0, o.Location?.Coordinates.Longitude ?? 0),
+        Address = o.Location?.RawAddress ?? string.Empty,
+        Latitude = o.Location?.Coordinates.Latitude,
+        Longitude = o.Location?.Coordinates.Longitude,
+        WindowStart = o.PreferredWindow.Start,
+        WindowEnd = o.PreferredWindow.End,
+        RequiredSkill = o.RequiredSkill,
+        RequiredTransport = o.RequiredTransport,
+        Priority = o.Priority,
+        TaskType = o.TaskType,
+        DurationMinutes = (int)o.ServiceDuration.TotalMinutes,
+    };
 }
