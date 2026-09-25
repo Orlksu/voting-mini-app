@@ -2,6 +2,7 @@ using Backend.Api.Infrastructure.Repositories;
 using Backend.Api.Services;
 using Backend.Contracts.Domain.Entities;
 using Backend.Contracts.Domain.Enums;
+using Backend.Contracts.Domain.ValueObjects;
 using Backend.Contracts.Interfaces;
 using Backend.Contracts.Requests;
 using Backend.Contracts.Responses;
@@ -17,6 +18,7 @@ public class OptimizationController : ControllerBase
     private readonly OptimizationJobStore _jobStore;
     private readonly IEngineerRepository _engineers;
     private readonly IWorkOrderRepository _workOrders;
+    private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<OptimizationController> _logger;
 
     public OptimizationController(
@@ -24,12 +26,14 @@ public class OptimizationController : ControllerBase
         OptimizationJobStore jobStore,
         IEngineerRepository engineers,
         IWorkOrderRepository workOrders,
+        IServiceScopeFactory scopeFactory,
         ILogger<OptimizationController> logger)
     {
         _optimizer = optimizer;
         _jobStore = jobStore;
         _engineers = engineers;
         _workOrders = workOrders;
+        _scopeFactory = scopeFactory;
         _logger = logger;
     }
 
@@ -150,6 +154,103 @@ public class OptimizationController : ControllerBase
             {
                 var result = await _optimizer.OptimizeAsync(request, CancellationToken.None);
                 _jobStore.Complete(jobId, result);
+
+                // Персистим рассчитанный план в БД и переводим статус заявок в Dispatched
+                try
+                {
+                    using var scope = _scopeFactory.CreateScope();
+                    var opRepo = scope.ServiceProvider.GetRequiredService<IOperationResultRepository>();
+                    var engRepo = scope.ServiceProvider.GetRequiredService<IEngineerRepository>();
+                    var woRepo = scope.ServiceProvider.GetRequiredService<IWorkOrderRepository>();
+
+                    var allEngineers = await engRepo.GetAllAsync(CancellationToken.None);
+                    var engineersByExtId = allEngineers
+                        .GroupBy(e => e.ExternalId, StringComparer.OrdinalIgnoreCase)
+                        .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+
+                    var operationResult = new OperationResult
+                    {
+                        Id = result.PlanId,
+                        JobId = jobId,
+                        PlanDate = result.PlanDate.ToUniversalTime(),
+                        Metrics = new PlanMetrics(
+                            result.Metrics.TotalOrders,
+                            result.Metrics.AssignedOrders,
+                            result.Metrics.UnassignedOrders,
+                            result.Metrics.OptimizedActiveEngineers,
+                            result.Metrics.BaselineActiveEngineers,
+                            result.Metrics.SavedEngineersCount,
+                            result.Metrics.OptimizedTotalDistanceKm,
+                            result.Metrics.BaselineTotalDistanceKm,
+                            result.Metrics.DistanceEconomyPercent),
+                        Routes = result.Routes.Select(r =>
+                        {
+                            engineersByExtId.TryGetValue(r.EngineerExternalId, out var eng);
+                            var routeId = Guid.NewGuid();
+                            return new EngineerRoute
+                            {
+                                Id = routeId,
+                                OperationResultId = result.PlanId,
+                                EngineerId = eng?.Id ?? Guid.Empty,
+                                EngineerExternalId = r.EngineerExternalId,
+                                EngineerName = r.EngineerName,
+                                Transport = r.Transport,
+                                BaselineDistanceKm = r.BaselineDistanceKm,
+                                EncodedPolyline = r.EncodedPolyline,
+                                Stops = r.Stops.Select(s => new RouteStop
+                                {
+                                    Id = Guid.NewGuid(),
+                                    EngineerRouteId = routeId,
+                                    Sequence = s.Sequence,
+                                    ExternalOrderId = s.ExternalOrderId,
+                                    Location = new Location
+                                    {
+                                        RawAddress = s.Address ?? string.Empty,
+                                        Coordinates = new GeoCoordinate(s.Latitude, s.Longitude)
+                                    },
+                                    EstimatedArrival = s.EstimatedArrival.ToUniversalTime(),
+                                    ServiceStart = s.ServiceStart.ToUniversalTime(),
+                                    ServiceEnd = s.ServiceEnd.ToUniversalTime(),
+                                    DistanceFromPreviousKm = s.DistanceFromPrevKm,
+                                    TravelTimeFromPrevious = TimeSpan.FromMinutes(s.TravelDurationMinutes),
+                                    WaitingDuration = s.ServiceStart > s.EstimatedArrival
+                                        ? s.ServiceStart - s.EstimatedArrival
+                                        : TimeSpan.Zero,
+                                    AssignmentReason = s.AssignmentReason
+                                }).ToList()
+                            };
+                        }).ToList(),
+                        UnassignedOrders = result.UnassignedOrders.Select(u => new UnassignedOrder
+                        {
+                            Id = Guid.NewGuid(),
+                            OperationResultId = result.PlanId,
+                            ExternalOrderId = u.ExternalOrderId,
+                            ReasonCode = u.ReasonCode,
+                            ReasonDescription = u.ReasonDescription
+                        }).ToList()
+                    };
+
+                    await opRepo.SaveResultAsync(operationResult, CancellationToken.None);
+
+                    var assignedExternalIds = result.Routes
+                        .SelectMany(r => r.Stops)
+                        .Select(s => s.ExternalOrderId)
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToList();
+
+                    if (assignedExternalIds.Count > 0)
+                    {
+                        var ordersToUpdate = await woRepo.GetByExternalIdsAsync(assignedExternalIds, CancellationToken.None);
+                        await woRepo.UpdateStatusesAsync(ordersToUpdate.Select(o => o.Id), OrderStatus.Dispatched, CancellationToken.None);
+                    }
+
+                    _logger.LogInformation("Job {JobId}: маршруты успешно сохранены в БД ({RoutesCount} маршрутов, {OrdersCount} назначенных заявок обновлены на Dispatched)",
+                        jobId, operationResult.Routes.Count, assignedExternalIds.Count);
+                }
+                catch (Exception persistEx)
+                {
+                    _logger.LogError(persistEx, "Job {JobId}: ошибка сохранения рассчитанного плана в БД", jobId);
+                }
             }
             catch (Exception ex)
             {
@@ -207,7 +308,9 @@ public class OptimizationController : ControllerBase
         e.Shift.End,
         e.Transport,
         [.. e.Skills],
-        e.MaxOrdersPerShift);
+        e.MaxOrdersPerShift,
+        e.District,
+        e.DepotId);
 
     private static WorkOrderInputDto ToWorkOrderInputDto(WorkOrder o) => new()
     {
