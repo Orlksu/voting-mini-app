@@ -64,12 +64,12 @@ public class MockRouteOptimizer : IRouteOptimizer
                 Routes: [],
                 UnassignedOrders: allUnassigned));
         }
-
-        // 1. Отсев заказов с некорректными геокоординатами
+        
         var validOrders = new List<WorkOrderInputDto>();
         foreach (var order in orders)
         {
             if (order.Latitude is null || order.Longitude is null ||
+                order.Latitude is < -90 or > 90 || order.Longitude is < -180 or > 180 ||
                 (Math.Abs(order.Latitude.Value) < 0.0001 && Math.Abs(order.Longitude.Value) < 0.0001))
             {
                 unassignedOrders.Add(new UnassignedOrderDto(
@@ -84,25 +84,23 @@ public class MockRouteOptimizer : IRouteOptimizer
             }
         }
 
-        // 2. Инициализация состояний доступных инженеров
+     
         var engineerStates = engineers.Select(e => new EngineerState(e)).ToList();
 
-        // 3. Сортировка пула заказов:
-        // Сначала Emergency (4) -> High (3) -> Normal (2) -> Low (1),
-        // затем по времени начала окна WindowStart, затем по дедлайну WindowEnd.
+      
         var pendingOrders = validOrders
             .OrderByDescending(o => o.Priority)
             .ThenBy(o => o.WindowStart ?? DateTimeOffset.MaxValue)
             .ThenBy(o => o.WindowEnd ?? DateTimeOffset.MaxValue)
             .ToList();
 
-        // 4. Жадное распределение по заказам (Nearest feasible neighbor)
+       
         foreach (var order in pendingOrders)
         {
             double orderLat = order.Latitude!.Value;
             double orderLon = order.Longitude!.Value;
 
-            // А. Проверка квалификации
+            
             var skillCandidates = engineerStates
                 .Where(s => s.Engineer.Skills.Contains(order.RequiredSkill))
                 .ToList();
@@ -117,7 +115,7 @@ public class MockRouteOptimizer : IRouteOptimizer
                 continue;
             }
 
-            // Б. Проверка совместимости транспорта
+           
             var transportCandidates = skillCandidates
                 .Where(s => order.RequiredTransport == null || s.Engineer.Transport == order.RequiredTransport)
                 .ToList();
@@ -132,7 +130,7 @@ public class MockRouteOptimizer : IRouteOptimizer
                 continue;
             }
 
-            // В. Проверка дневного лимита заказов инженера
+         
             var capacityCandidates = transportCandidates
                 .Where(s => s.Stops.Count < s.Engineer.MaxOrdersPerShift)
                 .ToList();
@@ -147,7 +145,7 @@ public class MockRouteOptimizer : IRouteOptimizer
                 continue;
             }
 
-            // Г. Моделирование времени доезда, обслуживания и окон
+            
             CandidateEvaluation? bestCandidate = null;
             bool anyShiftLimitFailed = false;
             bool anyWindowMissed = false;

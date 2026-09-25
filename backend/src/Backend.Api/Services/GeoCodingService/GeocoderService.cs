@@ -76,7 +76,7 @@ public class GeocoderService(HttpClient httpClient, IGeocodeCacheRepository cach
             if (result.ContainsKey(key))
                 continue;
 
-            if (cachedMap.TryGetValue(key, out var cached))
+            if (cachedMap.TryGetValue(key, out var cached) && cached is not null)
             {
                 result[key] = cached.IsNotFound ? null : cached;
                 continue;

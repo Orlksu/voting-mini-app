@@ -61,9 +61,19 @@ public class OptimizationController : ControllerBase
         var alignedEngineers = engineers.Select(e =>
         {
             var shiftDuration = e.ShiftEnd - e.ShiftStart;
+            if (shiftDuration <= TimeSpan.Zero)
+            {
+                shiftDuration += TimeSpan.FromDays(1);
+            }
+
             var alignedStart = new DateTimeOffset(planDate.Year, planDate.Month, planDate.Day,
                 e.ShiftStart.Hour, e.ShiftStart.Minute, e.ShiftStart.Second, e.ShiftStart.Offset);
             var alignedEnd = alignedStart + shiftDuration;
+            if (alignedEnd <= alignedStart)
+            {
+                alignedEnd = alignedEnd.AddDays(1);
+            }
+
             return e with { ShiftStart = alignedStart, ShiftEnd = alignedEnd };
         }).ToList();
 
