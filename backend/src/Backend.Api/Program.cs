@@ -1,6 +1,7 @@
 using Backend.Api.Infrastructure;
 using Backend.Api.Infrastructure.Repositories;
 using Backend.Api.Services;
+using Backend.Api.Services.Common;
 using Backend.Api.Services.CsvParserService;
 using Backend.Api.Services.EngineerService;
 using Backend.Api.Services.GeoCodingService;
@@ -23,7 +24,11 @@ builder.Services.AddProblemDetails(options =>
 
 builder.Services.AddControllers()
     .AddJsonOptions(options =>
-        options.JsonSerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter()));
+    {
+        options.JsonSerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
+        options.JsonSerializerOptions.Converters.Add(new MskDateTimeOffsetJsonConverter());
+        options.JsonSerializerOptions.Converters.Add(new MskNullableDateTimeOffsetJsonConverter());
+    });
 builder.Services.AddOpenApi();
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {

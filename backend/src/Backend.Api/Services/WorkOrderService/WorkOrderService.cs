@@ -131,12 +131,12 @@ public class WorkOrderService(
         return order is null ? null : ToDto(order);
     }
 
-    public async Task<bool> DeleteByIdentifierAsync(string identifier, CancellationToken ct = default)
+    public async Task<bool> DeleteByIdentifierAsync(string identifier, string? district = null, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(identifier))
             return false;
 
-        return await workOrders.DeleteByIdentifierAsync(identifier, ct);
+        return await workOrders.DeleteByIdentifierAsync(identifier, district, ct);
     }
 
     public async Task<WorkOrderDto> CreateAsync(CreateWorkOrderRequest request, CancellationToken ct = default)
@@ -156,8 +156,8 @@ public class WorkOrderService(
         if (request.ExternalId != null && request.ExternalId.Trim().Length > 100)
             throw new ArgumentException("Длина внешнего идентификатора (ExternalId) не должна превышать 100 символов.");
 
-        if (request.DurationMinutes <= 0)
-            throw new ArgumentException("Длительность выполнения заявки (DurationMinutes) должна быть положительным числом больше 0 минут.");
+        if (request.DurationMinutes <= 0 || request.DurationMinutes > 720)
+            throw new ArgumentException("Длительность выполнения заявки (DurationMinutes) должна быть в диапазоне от 1 до 720 минут (до 12 часов).");
 
         if (!Enum.IsDefined(typeof(SkillType), request.RequiredSkill) || (int)request.RequiredSkill == 0)
             throw new ArgumentException("Квалификация (RequiredSkill) обязательна и должна принимать одно из значений: LocalRepair, Installation, Emergency.");
@@ -251,8 +251,9 @@ public class WorkOrderService(
             }
             else if (allDepots.Count > 0)
             {
-                finalDepotId = allDepots[0].Id;
-                finalDistrict = allDepots[0].District;
+                var fallbackChoice = allDepots.OrderBy(d => d.District).ThenBy(d => d.Id).First();
+                finalDepotId = fallbackChoice.Id;
+                finalDistrict = fallbackChoice.District;
             }
             else
             {

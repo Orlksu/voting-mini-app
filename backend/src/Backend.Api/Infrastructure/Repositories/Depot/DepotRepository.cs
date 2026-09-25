@@ -35,13 +35,14 @@ public class DepotRepository(AppDbContext db) : IDepotRepository
 
         if (depot is null)
         {
-            // Если в БД есть запись по fallbackDistrict — обновляем её
+            // Если в БД есть запись по fallbackDistrict — обновляем её ТОЛЬКО если у неё еще не было локации
             depot = await db.Depots.FirstOrDefaultAsync(d => d.District == fallbackDistrict, ct);
             if (depot != null)
             {
-                if (hasAddress || hasCoords)
+                if (depot.Location is null && (hasAddress || hasCoords))
                 {
                     depot.Location = new Location { RawAddress = address, Coordinates = new GeoCoordinate(lat, lon) };
+                    await db.SaveChangesAsync(ct);
                 }
             }
             else
@@ -54,8 +55,8 @@ public class DepotRepository(AppDbContext db) : IDepotRepository
                         : null
                 };
                 await db.Depots.AddAsync(depot, ct);
+                await db.SaveChangesAsync(ct);
             }
-            await db.SaveChangesAsync(ct);
         }
 
         return depot;

@@ -82,9 +82,19 @@ public class WorkOrderRepository(AppDbContext db) : IWorkOrderRepository
         {
             var trimmedDistrict = district.Trim();
             query = query.Where(w => w.District == trimmedDistrict);
+            return await query.FirstOrDefaultAsync(ct);
         }
 
-        return await query.FirstOrDefaultAsync(ct);
+        var matching = await query.ToListAsync(ct);
+        if (matching.Count > 1)
+        {
+            var districts = string.Join(", ", matching.Select(o => $"'{o.District}'"));
+            throw new InvalidOperationException(
+                $"Найдено несколько заявок ({matching.Count}) с номером '{trimmed}' в разных районах ({districts}). " +
+                $"Укажите параметр запроса 'district' или точный уникальный Id (Guid) заявки.");
+        }
+
+        return matching.FirstOrDefault();
     }
 
     public async Task<List<WorkOrder>> GetByExternalIdsAsync(IEnumerable<string> externalIds, CancellationToken ct = default)
@@ -119,7 +129,7 @@ public class WorkOrderRepository(AppDbContext db) : IWorkOrderRepository
             .ExecuteUpdateAsync(setters => setters.SetProperty(w => w.Status, newStatus), ct);
     }
 
-    public async Task<bool> DeleteByIdentifierAsync(string identifier, CancellationToken ct = default)
+    public async Task<bool> DeleteByIdentifierAsync(string identifier, string? district = null, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(identifier))
             return false;
@@ -134,13 +144,20 @@ public class WorkOrderRepository(AppDbContext db) : IWorkOrderRepository
 
         if (targetOrder is null)
         {
-            var matching = await db.WorkOrders.Where(w => w.ExternalId == trimmed).ToListAsync(ct);
+            var query = db.WorkOrders.Where(w => w.ExternalId == trimmed);
+            if (!string.IsNullOrWhiteSpace(district))
+            {
+                var trimmedDistrict = district.Trim();
+                query = query.Where(w => w.District == trimmedDistrict);
+            }
+
+            var matching = await query.ToListAsync(ct);
             if (matching.Count > 1)
             {
                 var districts = string.Join(", ", matching.Select(o => $"'{o.District}'"));
                 throw new InvalidOperationException(
                     $"Найдено несколько заявок ({matching.Count}) с номером '{trimmed}' в разных районах ({districts}). " +
-                    $"Для безопасного удаления укажите точный уникальный Id (Guid) заявки.");
+                    $"Для безопасного удаления укажите район (параметр 'district') или точный уникальный Id (Guid) заявки.");
             }
 
             if (matching.Count == 1)
