@@ -10,4 +10,5 @@ public interface IWorkOrderService
     Task<OrderImportResultDto> ImportOrdersCsvAsync(List<IFormFile> files, CancellationToken ct = default);
     Task<List<WorkOrderDto>> GetAllAsync(CancellationToken ct = default);
     Task<List<EngineerOrderDto>?> GetByEngineerAsync(Guid engineerId, CancellationToken ct = default);
+    Task<List<EngineerOrderDto>?> GetByEngineerAsync(string identifier, CancellationToken ct = default);
 }

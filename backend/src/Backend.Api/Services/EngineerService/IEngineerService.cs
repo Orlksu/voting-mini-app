@@ -13,5 +13,8 @@ public interface IEngineerService
     Task<EngineerImportResultDto> ImportEngineersAsync(List<EngineerCsvRowDto> rawEngineers,
         CancellationToken ct = default);
     Task<bool> DeleteEngineerAsync(string externalId, CancellationToken ct = default);
+    Task<bool> DeleteEngineerByIdentifierAsync(string identifier, CancellationToken ct = default);
     Task<EngineerDto?> GetEngineerByExternalIdAsync(string externalId, CancellationToken ct = default);
+    Task<EngineerDto?> GetEngineerByIdAsync(Guid id, CancellationToken ct = default);
+    Task<EngineerDto?> GetEngineerByIdentifierAsync(string identifier, CancellationToken ct = default);
 }

@@ -20,6 +20,25 @@ public class WorkOrderService(
     IGeocoder geocoder,
     ILogger<WorkOrderService> logger) : IWorkOrderService
 {
+    public async Task<List<EngineerOrderDto>?> GetByEngineerAsync(string identifier, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(identifier))
+            return null;
+
+        var trimmed = identifier.Trim();
+        Engineer? engineer = null;
+        if (Guid.TryParse(trimmed, out var guid))
+        {
+            engineer = await engineers.GetByIdAsync(guid, ct);
+        }
+
+        engineer ??= await engineers.GetByExternalIdAsync(trimmed, ct);
+        if (engineer is null)
+            return null;
+
+        return await GetByEngineerAsync(engineer.Id, ct);
+    }
+
     public async Task<List<EngineerOrderDto>?> GetByEngineerAsync(Guid engineerId, CancellationToken ct = default)
     {
         var engineer = await engineers.GetByIdAsync(engineerId, ct);

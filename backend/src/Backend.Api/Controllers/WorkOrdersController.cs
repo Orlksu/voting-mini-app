@@ -13,14 +13,14 @@ public class WorkOrdersController(IWorkOrderService workOrderService) : Controll
     public async Task<IActionResult> GetAll(CancellationToken ct)
         => Ok(await workOrderService.GetAllAsync(ct));
 
-    [HttpGet("by-engineer/{engineerId:guid}")]
+    [HttpGet("by-engineer/{identifier}")]
     [ProducesResponseType<List<EngineerOrderDto>>(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<IActionResult> GetByEngineer(Guid engineerId, CancellationToken ct)
+    public async Task<IActionResult> GetByEngineer(string identifier, CancellationToken ct)
     {
-        var orders = await workOrderService.GetByEngineerAsync(engineerId, ct);
+        var orders = await workOrderService.GetByEngineerAsync(identifier, ct);
         if (orders is null)
-            return NotFound($"Инженер с id {engineerId} не найден.");
+            return NotFound($"Инженер '{identifier}' не найден.");
 
         return Ok(orders);
     }

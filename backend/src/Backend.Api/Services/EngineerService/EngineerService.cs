@@ -223,10 +223,51 @@ public class EngineerService(IDepotRepository depots, IEngineerRepository engine
     public async Task<bool> DeleteEngineerAsync(string externalId, CancellationToken ct = default)
         => await engineers.DeleteEngineerAsync(externalId, ct) > 0;
 
+    public async Task<bool> DeleteEngineerByIdentifierAsync(string identifier, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(identifier))
+            return false;
+
+        var trimmed = identifier.Trim();
+        if (Guid.TryParse(trimmed, out var guid))
+        {
+            var byId = await engineers.GetByIdAsync(guid, ct);
+            if (byId != null)
+            {
+                return await engineers.DeleteEngineerAsync(byId.ExternalId, ct) > 0;
+            }
+        }
+
+        return await engineers.DeleteEngineerAsync(trimmed, ct) > 0;
+    }
+
     public async Task<EngineerDto?> GetEngineerByExternalIdAsync(string externalId, CancellationToken ct = default)
     {
         var engineer = await engineers.GetByExternalIdAsync(externalId, ct);
         return engineer is null ? null : ToDto(engineer);
+    }
+
+    public async Task<EngineerDto?> GetEngineerByIdAsync(Guid id, CancellationToken ct = default)
+    {
+        var engineer = await engineers.GetByIdAsync(id, ct);
+        return engineer is null ? null : ToDto(engineer);
+    }
+
+    public async Task<EngineerDto?> GetEngineerByIdentifierAsync(string identifier, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(identifier))
+            return null;
+
+        var trimmed = identifier.Trim();
+        if (Guid.TryParse(trimmed, out var guid))
+        {
+            var byId = await engineers.GetByIdAsync(guid, ct);
+            if (byId != null)
+                return ToDto(byId);
+        }
+
+        var byExternal = await engineers.GetByExternalIdAsync(trimmed, ct);
+        return byExternal is null ? null : ToDto(byExternal);
     }
     private async Task<Location?> ResolveStartLocationAsync(EngineerCsvRowDto raw, string district, CancellationToken ct)
     {
