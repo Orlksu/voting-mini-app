@@ -1,6 +1,6 @@
 import axios from 'axios'
 
-export const http = axios.create({
+export const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL ?? '/api/v1',
   timeout: 10_000,
   headers: {
@@ -8,7 +8,7 @@ export const http = axios.create({
   },
 })
 
-http.interceptors.response.use(
+api.interceptors.response.use(
   (response) => response,
   (error: unknown) => {
     if (!axios.isAxiosError(error)) {
