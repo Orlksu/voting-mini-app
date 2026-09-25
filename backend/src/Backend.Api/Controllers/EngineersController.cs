@@ -1,5 +1,6 @@
 using Backend.Api.Services.CsvParserService;
 using Backend.Api.Services.EngineerService;
+using Backend.Api.Services.WorkOrderService;
 using Backend.Contracts.Responses;
 using Microsoft.AspNetCore.Mvc;
 
@@ -53,5 +54,17 @@ public class EngineersController(IEngineerCsvParser csvParser, IEngineerService 
     {
         var engineer = await engineerService.GetEngineerByIdentifierAsync(id, ct);
         return engineer is null ? NotFound("Инженер не найден.") : Ok(engineer);
+    }
+
+    /// <summary>
+    /// Получение рассчитанного маршрута конкретного инженера с полилинией (EncodedPolyline)
+    /// </summary>
+    [HttpGet("{id}/route")]
+    [ProducesResponseType<EngineerRouteDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetEngineerRoute(string id, [FromServices] IWorkOrderService workOrderService, CancellationToken ct)
+    {
+        var route = await workOrderService.GetRouteByEngineerAsync(id, ct);
+        return route is null ? NotFound($"Маршрут для инженера '{id}' не найден.") : Ok(route);
     }
 }

@@ -1,4 +1,5 @@
 using Backend.Api.Services;
+using Backend.Api.Services.Common;
 using Backend.Api.Services.WorkOrderService;
 using Backend.Contracts.Responses;
 using Microsoft.AspNetCore.Mvc;
@@ -18,18 +19,19 @@ public class WorkOrdersController(
     public async Task<IActionResult> GetAll(CancellationToken ct)
         => Ok(await workOrderService.GetAllAsync(ct));
 
-    [HttpGet("by-engineer/{identifier}")]
-    [ProducesResponseType<List<EngineerOrderDto>>(StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<IActionResult> GetByEngineer(string identifier, CancellationToken ct)
-    {
-        var orders = await workOrderService.GetByEngineerAsync(identifier, ct);
-        if (orders is null)
-            return NotFound($"Инженер '{identifier}' не найден.");
-
-        return Ok(orders);
-    }
-
+    /// <summary>
+    /// Загрузка CSV-файлов с заявками на обслуживание и геокодирование адресов.
+    /// </summary>
+    /// <param name="files">Список CSV-файлов в формате multipart/form-data (до 20 МБ).</param>
+    /// <param name="sync">
+    /// Режим выполнения импорта:
+    /// - false (по умолчанию): асинхронная фоновая обработка (202 Accepted + заголовок Location для поллинга статуса).
+    /// - true: блокирующий синхронный режим (200 OK, рекомендуется для интеграционных тестов или небольших файлов).
+    /// </param>
+    /// <param name="ct">Токен отмены HTTP-запроса.</param>
+    /// <response code="202">Фоновая задача успешно создана. Статус отслеживается через эндпоинт import-jobs/{jobId}.</response>
+    /// <response code="200">Синхронный импорт успешно завершён (при sync=true).</response>
+    /// <response code="400">Файлы не переданы или имеют некорректный формат/пусты.</response>
     [HttpPost("upload-csv")]
     [Consumes("multipart/form-data")]
     [RequestSizeLimit(20 * 1024 * 1024)]
@@ -45,15 +47,7 @@ public class WorkOrdersController(
             return BadRequest("Файл не получен. Отправьте multipart/form-data с полем 'files', содержащим CSV-файл(ы).");
 
         // Вычитываем байты файлов до завершения HTTP-запроса, чтобы избежать ObjectDisposedException
-        var payloads = new List<(string FileName, byte[] Content)>();
-        foreach (var file in files)
-        {
-            if (file.Length == 0) continue;
-            using var ms = new MemoryStream();
-            await file.CopyToAsync(ms, ct);
-            payloads.Add((file.FileName, ms.ToArray()));
-        }
-
+        var payloads = await FormFileHelper.ReadPayloadsAsync(files, ct);
         if (payloads.Count == 0)
             return BadRequest("Загруженные файлы пусты.");
 

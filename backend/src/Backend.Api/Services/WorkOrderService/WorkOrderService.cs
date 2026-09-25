@@ -1,4 +1,6 @@
 using Backend.Api.Infrastructure.Repositories;
+using Backend.Api.Services;
+using Backend.Api.Services.Common;
 using Backend.Api.Services.CsvParserService;
 using Backend.Api.Services.GeoCodingService;
 using Backend.Contracts.Domain.Entities;
@@ -6,6 +8,7 @@ using Backend.Contracts.Domain.Enums;
 using Backend.Contracts.Domain.ValueObjects;
 using Backend.Contracts.Requests;
 using Backend.Contracts.Responses;
+using Backend.RoutingEngine.Helpers;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 
@@ -16,11 +19,12 @@ public class WorkOrderService(
     IWorkOrderRepository workOrders, 
     IEngineerRepository engineers, 
     IEngineerRouteRepository routes, 
+    OptimizationJobStore jobStore,
     ICsvParserService csvParserService,
     IGeocoder geocoder,
     ILogger<WorkOrderService> logger) : IWorkOrderService
 {
-    public async Task<List<EngineerOrderDto>?> GetByEngineerAsync(string identifier, CancellationToken ct = default)
+    public async Task<EngineerRouteDto?> GetRouteByEngineerAsync(string identifier, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(identifier))
             return null;
@@ -36,52 +40,80 @@ public class WorkOrderService(
         if (engineer is null)
             return null;
 
-        return await GetByEngineerAsync(engineer.Id, ct);
-    }
-
-    public async Task<List<EngineerOrderDto>?> GetByEngineerAsync(Guid engineerId, CancellationToken ct = default)
-    {
-        var engineer = await engineers.GetByIdAsync(engineerId, ct);
-        if (engineer is null)
-            return null;
-
-        var engineerRoutes = await routes.GetByEngineerAsync(engineerId, ct);
-        if (engineerRoutes.Count == 0)
-            return [];
-
-        var externalOrderIds = engineerRoutes
-            .SelectMany(r => r.Stops)
-            .Select(s => s.ExternalOrderId)
-            .Distinct();
-        var ordersByExternalId = (await workOrders.GetByExternalIdsAsync(externalOrderIds, ct))
-            .GroupBy(w => w.ExternalId)
-            .ToDictionary(g => g.Key, g => g.First());
-
-        var result = new List<EngineerOrderDto>();
-        foreach (var route in engineerRoutes.OrderBy(r => r.Id))
+        // 1. Поиск сохранённого маршрута в БД (сортируем хронологически по времени первого визита)
+        var engineerRoutes = await routes.GetByEngineerAsync(engineer.Id, ct);
+        if (engineerRoutes.Count > 0)
         {
-            foreach (var stop in route.Stops.OrderBy(s => s.Sequence))
-            {
-                if (!ordersByExternalId.TryGetValue(stop.ExternalOrderId, out var order))
-                {
-                    logger.LogWarning(
-                        "Заявка {ExternalOrderId} из маршрута {RouteId} инженера {EngineerId} не найдена в БД.",
-                        stop.ExternalOrderId, route.Id, engineerId);
-                    continue;
-                }
+            var route = engineerRoutes
+                .OrderByDescending(r => r.Stops.Count > 0 ? r.Stops.Min(s => s.EstimatedArrival) : DateTimeOffset.MinValue)
+                .First();
+            var polyline = !string.IsNullOrEmpty(route.EncodedPolyline)
+                ? route.EncodedPolyline
+                : (route.Stops.Count > 0
+                    ? PolylineEncoder.Encode(
+                        (engineer.StartLocation != null
+                            ? [(engineer.StartLocation.Coordinates.Latitude, engineer.StartLocation.Coordinates.Longitude)]
+                            : Enumerable.Empty<(double, double)>())
+                        .Concat(route.Stops.OrderBy(s => s.Sequence).Select(s => (s.Location.Coordinates.Latitude, s.Location.Coordinates.Longitude))))
+                    : null);
 
-                result.Add(new EngineerOrderDto(
-                    route.Id,
-                    stop.Sequence,
-                    ToDto(order),
-                    stop.EstimatedArrival,
-                    stop.ServiceStart,
-                    stop.ServiceEnd,
-                    stop.AssignmentReason));
+            var stops = route.Stops.OrderBy(s => s.Sequence).Select(s => new RouteStopDto(
+                s.Sequence,
+                s.ExternalOrderId,
+                s.Location?.RawAddress ?? string.Empty,
+                s.Location?.Coordinates.Latitude ?? 0.0,
+                s.Location?.Coordinates.Longitude ?? 0.0,
+                s.EstimatedArrival,
+                s.ServiceStart,
+                s.ServiceEnd,
+                (int)s.TravelTimeFromPrevious.TotalMinutes,
+                s.DistanceFromPreviousKm,
+                string.Empty,
+                OrderPriority.Normal,
+                s.AssignmentReason
+            )).ToList();
+
+            return new EngineerRouteDto(
+                route.EngineerExternalId,
+                route.EngineerName,
+                route.Transport,
+                route.Stops.Count,
+                Math.Round(route.TotalDistanceKm, 2),
+                Math.Round(route.BaselineDistanceKm ?? (route.TotalDistanceKm * 1.25), 2),
+                (int)route.TotalTravelTime.TotalMinutes,
+                stops,
+                polyline,
+                engineer.StartLocation?.RawAddress,
+                engineer.StartLocation?.Coordinates.Latitude,
+                engineer.StartLocation?.Coordinates.Longitude);
+        }
+
+        // 2. Fallback на in-memory план
+        var lastPlan = jobStore.LastResult;
+        if (lastPlan != null)
+        {
+            var memoryRoute = lastPlan.Routes.FirstOrDefault(r =>
+                string.Equals(r.EngineerExternalId, engineer.ExternalId, StringComparison.OrdinalIgnoreCase));
+            if (memoryRoute != null)
+            {
+                return memoryRoute;
             }
         }
 
-        return result;
+        // 3. Инженер найден в базе, но на смену у него 0 назначенных заявок -> возвращаем пустой маршрут (200 OK)
+        return new EngineerRouteDto(
+            engineer.ExternalId,
+            engineer.Name,
+            engineer.Transport,
+            0,
+            0.0,
+            0.0,
+            0,
+            [],
+            null,
+            engineer.StartLocation?.RawAddress,
+            engineer.StartLocation?.Coordinates.Latitude,
+            engineer.StartLocation?.Coordinates.Longitude);
     }
 
     public async Task<List<WorkOrderDto>> GetAllAsync(CancellationToken ct = default)
@@ -171,15 +203,7 @@ public class WorkOrderService(
 
     public async Task<OrderImportResultDto> ImportOrdersCsvAsync(List<IFormFile> files, CancellationToken ct = default)
     {
-        var payloads = new List<(string FileName, byte[] Content)>();
-        foreach (var file in files)
-        {
-            if (file.Length == 0) continue;
-            using var ms = new MemoryStream();
-            await file.CopyToAsync(ms, ct);
-            payloads.Add((file.FileName, ms.ToArray()));
-        }
-
+        var payloads = await FormFileHelper.ReadPayloadsAsync(files, ct);
         return await ImportOrdersFromPayloadsAsync(payloads, null, ct);
     }
 
