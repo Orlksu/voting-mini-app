@@ -11,7 +11,7 @@ public interface IWorkOrderRepository
     Task<WorkOrder?> GetByIdAsync(Guid id, CancellationToken ct = default);
     Task<WorkOrder?> GetByExternalIdAsync(string externalId, CancellationToken ct = default);
     Task<WorkOrder?> GetByExternalIdAndDistrictAsync(string externalId, string district, CancellationToken ct = default);
-    Task<WorkOrder?> GetByIdentifierAsync(string identifier, CancellationToken ct = default);
+    Task<WorkOrder?> GetByIdentifierAsync(string identifier, string? district = null, CancellationToken ct = default);
     Task<List<WorkOrder>> GetByExternalIdsAsync(IEnumerable<string> externalIds, CancellationToken ct = default);
     Task<List<WorkOrder>> GetNotDispatchedByDepotIdAsync(Guid depotId, CancellationToken ct = default);
     Task<List<WorkOrder>> GetNotDispatchedByDistrictAsync(string district, CancellationToken ct = default);

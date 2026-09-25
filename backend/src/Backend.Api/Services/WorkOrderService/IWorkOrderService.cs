@@ -7,7 +7,7 @@ namespace Backend.Api.Services.WorkOrderService;
 public interface IWorkOrderService
 {
     Task<WorkOrderDto> CreateAsync(CreateWorkOrderRequest request, CancellationToken ct = default);
-    Task<WorkOrderDto?> GetByIdentifierAsync(string identifier, CancellationToken ct = default);
+    Task<WorkOrderDto?> GetByIdentifierAsync(string identifier, string? district = null, CancellationToken ct = default);
     Task<bool> DeleteByIdentifierAsync(string identifier, CancellationToken ct = default);
     Task<int> AddFromImportAsync(DepotDto depotDto, List<WorkOrderInputDto> orders, CancellationToken ct = default);
     Task<OrderImportResultDto> ImportOrdersCsvAsync(List<IFormFile> files, CancellationToken ct = default);

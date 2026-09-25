@@ -122,12 +122,12 @@ public class WorkOrderService(
         return orders.Select(ToDto).ToList();
     }
 
-    public async Task<WorkOrderDto?> GetByIdentifierAsync(string identifier, CancellationToken ct = default)
+    public async Task<WorkOrderDto?> GetByIdentifierAsync(string identifier, string? district = null, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(identifier))
             return null;
 
-        var order = await workOrders.GetByIdentifierAsync(identifier, ct);
+        var order = await workOrders.GetByIdentifierAsync(identifier, district, ct);
         return order is null ? null : ToDto(order);
     }
 
@@ -144,8 +144,29 @@ public class WorkOrderService(
         if (string.IsNullOrWhiteSpace(request.Address))
             throw new ArgumentException("Адрес заявки (Address) обязателен для заполнения.");
 
+        if (request.Address.Trim().Length > 500)
+            throw new ArgumentException("Длина адреса заявки (Address) не должна превышать 500 символов.");
+
+        if (request.TaskType != null && request.TaskType.Trim().Length > 100)
+            throw new ArgumentException("Длина типа задачи (TaskType) не должна превышать 100 символов.");
+
+        if (request.District != null && request.District.Trim().Length > 100)
+            throw new ArgumentException("Длина названия района (District) не должна превышать 100 символов.");
+
+        if (request.ExternalId != null && request.ExternalId.Trim().Length > 100)
+            throw new ArgumentException("Длина внешнего идентификатора (ExternalId) не должна превышать 100 символов.");
+
         if (request.DurationMinutes <= 0)
             throw new ArgumentException("Длительность выполнения заявки (DurationMinutes) должна быть положительным числом больше 0 минут.");
+
+        if (!Enum.IsDefined(typeof(SkillType), request.RequiredSkill) || (int)request.RequiredSkill == 0)
+            throw new ArgumentException("Квалификация (RequiredSkill) обязательна и должна принимать одно из значений: LocalRepair, Installation, Emergency.");
+
+        if (!Enum.IsDefined(typeof(OrderPriority), request.Priority) || (int)request.Priority == 0)
+            throw new ArgumentException("Приоритет (Priority) должен принимать одно из значений: Low, Normal, High, Emergency.");
+
+        if (request.RequiredTransport.HasValue && (!Enum.IsDefined(typeof(TransportType), request.RequiredTransport.Value) || (int)request.RequiredTransport.Value == 0))
+            throw new ArgumentException("Тип транспорта (RequiredTransport) должен принимать одно из значений: Car, PublicTransit, Bicycle, Pedestrian.");
 
         double lat;
         double lon;

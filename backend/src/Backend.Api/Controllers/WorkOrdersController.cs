@@ -60,15 +60,16 @@ public class WorkOrdersController(
     /// Получение информации о конкретной заявке по Id (Guid) или внешнему номеру (ExternalId).
     /// </summary>
     /// <param name="identifier">Внутренний Guid заявки или строковый ExternalId.</param>
+    /// <param name="district">Опциональный район (District) для однозначной идентификации при поиске по ExternalId.</param>
     /// <param name="ct">Токен отмены запроса.</param>
     /// <response code="200">Информация о заявке найдена.</response>
     /// <response code="404">Заявка не найдена.</response>
     [HttpGet("{identifier}")]
     [ProducesResponseType<WorkOrderDto>(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<IActionResult> GetByIdentifier(string identifier, CancellationToken ct)
+    public async Task<IActionResult> GetByIdentifier(string identifier, [FromQuery] string? district, CancellationToken ct)
     {
-        var order = await workOrderService.GetByIdentifierAsync(identifier, ct);
+        var order = await workOrderService.GetByIdentifierAsync(identifier, district, ct);
         return order is null ? NotFound("Заявка не найдена.") : Ok(order);
     }
 
@@ -95,6 +96,10 @@ public class WorkOrdersController(
         catch (InvalidOperationException ex)
         {
             return BadRequest(ex.Message);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            return NotFound("Заявка уже была удалена или изменена другой операцией.");
         }
     }
 

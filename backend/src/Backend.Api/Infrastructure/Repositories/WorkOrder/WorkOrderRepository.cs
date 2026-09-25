@@ -64,7 +64,7 @@ public class WorkOrderRepository(AppDbContext db) : IWorkOrderRepository
     public async Task<WorkOrder?> GetByExternalIdAndDistrictAsync(string externalId, string district, CancellationToken ct = default)
         => await db.WorkOrders.AsNoTracking().FirstOrDefaultAsync(w => w.ExternalId == externalId && w.District == district, ct);
 
-    public async Task<WorkOrder?> GetByIdentifierAsync(string identifier, CancellationToken ct = default)
+    public async Task<WorkOrder?> GetByIdentifierAsync(string identifier, string? district = null, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(identifier))
             return null;
@@ -77,7 +77,14 @@ public class WorkOrderRepository(AppDbContext db) : IWorkOrderRepository
                 return byId;
         }
 
-        return await db.WorkOrders.AsNoTracking().FirstOrDefaultAsync(w => w.ExternalId == trimmed, ct);
+        var query = db.WorkOrders.AsNoTracking().Where(w => w.ExternalId == trimmed);
+        if (!string.IsNullOrWhiteSpace(district))
+        {
+            var trimmedDistrict = district.Trim();
+            query = query.Where(w => w.District == trimmedDistrict);
+        }
+
+        return await query.FirstOrDefaultAsync(ct);
     }
 
     public async Task<List<WorkOrder>> GetByExternalIdsAsync(IEnumerable<string> externalIds, CancellationToken ct = default)
