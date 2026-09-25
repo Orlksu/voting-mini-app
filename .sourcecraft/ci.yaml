@@ -26,17 +26,22 @@ workflows:
               DOTNET_CLI_TELEMETRY_OPTOUT: "1"
             script:
               - |
+                restore_succeeded=false
                 for attempt in 1 2 3; do
                   if dotnet restore backend/src/Backend.Api/Backend.Api.csproj \
                     --runtime linux-x64 \
                     --disable-parallel; then
+                    restore_succeeded=true
                     break
                   fi
-                  if [ "$attempt" -eq 3 ]; then
-                    exit 1
+                  if [ "$attempt" -lt 3 ]; then
+                    sleep 10
                   fi
-                  sleep 10
                 done
+                if [ "$restore_succeeded" != true ]; then
+                  echo "NuGet restore failed after 3 attempts" >&2
+                  exit 1
+                fi
               - |
                 dotnet build backend/src/Backend.Api/Backend.Api.csproj \
                   --configuration Release \

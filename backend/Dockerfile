@@ -11,18 +11,16 @@ RUN case "$TARGETARCH" in \
       arm64) rid=linux-arm64 ;; \
       *) echo "Unsupported Docker architecture: $TARGETARCH" >&2; exit 1 ;; \
     esac && \
-    dotnet restore "src/Backend.Api/Backend.Api.csproj" --runtime "$rid"
+    printf '%s' "$rid" > /tmp/target-rid
+
+RUN dotnet restore "src/Backend.Api/Backend.Api.csproj" \
+      --runtime "$(cat /tmp/target-rid)"
 
 COPY . .
 
-RUN case "$TARGETARCH" in \
-      amd64) rid=linux-x64 ;; \
-      arm64) rid=linux-arm64 ;; \
-      *) echo "Unsupported Docker architecture: $TARGETARCH" >&2; exit 1 ;; \
-    esac && \
-    dotnet publish "src/Backend.Api/Backend.Api.csproj" \
+RUN dotnet publish "src/Backend.Api/Backend.Api.csproj" \
       -c Release \
-      -r "$rid" \
+      -r "$(cat /tmp/target-rid)" \
       --self-contained false \
       -o /app/publish \
       /p:UseAppHost=false \
