@@ -25,6 +25,9 @@ namespace Backend.RoutingEngine.Solvers;
 ///  — мягкие — пропуск заявки с приоритетным штрафом (Авария ≫ Подключение ≫ Ремонт/Дозаказ).
 ///  — Фаза B: пер-бригадные матрицы (costing транспорта через Valhalla); транзит и арк-косты
 ///    задаются по-бригадно (SetArcCostEvaluatorOfVehicle + AddDimensionWithVehicleTransits).
+///  — Фаза C: счётная дименсия «Count» — MaxOrdersPerShift (емкость по бригадам, перебор →
+///    пропуск заявки с причиной ShiftLimitExceeded); оборудование как жёсткое ограничение
+///    (у бригады должно быть ВСЁ требуемое заявкой); честный baseline через BaselinePlanner.
 /// </summary>
 public class OrToolsVrpSolver
 {
@@ -124,6 +127,26 @@ public class OrToolsVrpSolver
 
         routing.SetFixedCostOfAllVehicles(VehicleFixedCost);
 
+        // Фаза C: лимит заявок за смену (MaxOrdersPerShift) — счётная дименсия.
+        // Инкремент 1 при переходе в узел заявки; обеды и виртуальные концы не считаются.
+        // Емкость своя у каждой бригады; переполнение → заявка не вставляется и пропускается.
+        int countCallback = routing.RegisterTransitCallback((long fromIndex, long toIndex) =>
+        {
+            int toNode = manager.IndexToNode(toIndex);
+            return toNode >= numVehicles && toNode < numVehicles + numOrders ? 1 : 0;
+        });
+        var orderCapacities = new long[numVehicles];
+        for (int v = 0; v < numVehicles; v++)
+        {
+            orderCapacities[v] = engineers[v].MaxOrdersPerShift > 0 ? engineers[v].MaxOrdersPerShift : long.MaxValue;
+        }
+        routing.AddDimensionWithVehicleCapacity(
+            countCallback,
+            slack_max: 0,
+            vehicle_capacities: orderCapacities,
+            fix_start_cumul_to_zero: true,
+            name: "Count");
+
         // Временная дименсия: горизонт 24 ч от baseTime, ожидание (slack) до 24 ч на дуге.
         // Дименсия учитывает разный transit по бригадам (AddDimensionWithVehicleTransits).
         routing.AddDimensionWithVehicleTransits(
@@ -184,7 +207,7 @@ public class OrToolsVrpSolver
             routing.VehicleVar(index).SetValues(new long[] { vehicle });
         }
 
-        // Жёсткие ограничения: навыки и транспорт — сужение домена VehicleVar заявки.
+        // Жёсткие ограничения: навыки, транспорт, оборудование — сужение домена VehicleVar заявки.
         for (int j = 0; j < numOrders; j++)
         {
             var ord = orders[j];
@@ -197,7 +220,11 @@ public class OrToolsVrpSolver
                 bool hasSkill = eng.Skills != null && eng.Skills.Contains(ord.RequiredSkill);
                 bool hasTransport = ord.RequiredTransport == null || eng.Transport == ord.RequiredTransport;
 
-                if (!hasSkill || !hasTransport)
+                // Фаза C: у бригады должно быть ВСЁ оборудование, требуемое заявкой.
+                bool hasEquipment = ord.RequiredEquipment is not { Count: > 0 } ||
+                                    (eng.Equipment != null && ord.RequiredEquipment.All(r => eng.Equipment.Contains(r)));
+
+                if (!hasSkill || !hasTransport || !hasEquipment)
                 {
                     routing.VehicleVar(index).RemoveValue(i);
                 }
@@ -254,7 +281,7 @@ public class OrToolsVrpSolver
                     AssignedOrders: 0,
                     UnassignedOrders: totalUnassigned.Count,
                     OptimizedActiveEngineers: 0,
-                    BaselineActiveEngineers: engineers.Count,
+                    BaselineActiveEngineers: 0,
                     SavedEngineersCount: Math.Max(0, engineers.Count),
                     OptimizedTotalDistanceKm: 0,
                     BaselineTotalDistanceKm: 0,
@@ -299,7 +326,7 @@ public class OrToolsVrpSolver
                 AssignedOrders: 0,
                 UnassignedOrders: unassigned.Count,
                 OptimizedActiveEngineers: 0,
-                BaselineActiveEngineers: engineers.Count,
+                BaselineActiveEngineers: 0,
                 SavedEngineersCount: Math.Max(0, engineers.Count),
                 OptimizedTotalDistanceKm: 0,
                 BaselineTotalDistanceKm: 0,
@@ -335,6 +362,10 @@ public class OrToolsVrpSolver
         // Точки, для которых есть матрицы (старты + заявки). Обеды и концы — без дорог.
         int numMatrixPoints = numVehicles + numOrders;
 
+        // Фаза C: честный baseline — конструктивный (жадный) план на тех же матрицах.
+        var globalBaseline = BaselinePlanner.ComputeGlobal(engineers, orders, distanceMatrix, timeMatrix);
+        var ordersVisitedByEngineer = new int[numVehicles];
+
         // Выезд бригады (смена может начинаться позже начала; фиксируем по cumul стартового узла).
         // Прибытие в стоп считаем инкрементально: cumul предыдущего стопа + его обслуживание + дорога.
         // (SlackVar в возвращаемом Assignment не сохраняется — прибытие вычисляем, а не читаем.)
@@ -357,6 +388,7 @@ public class OrToolsVrpSolver
 
             var stops = new List<RouteStopDto>();
             var breaks = new List<BreakStopDto>();
+            var routeOrderIndexes = new List<int>();
 
             long prevCumul = solution.Min(timeDimension.CumulVar(routing.Start(i)));
             // Последняя ФИЗИЧЕСКАЯ точка маршрута (старт или заявка). Узел обеда — виртуальный,
@@ -401,6 +433,7 @@ public class OrToolsVrpSolver
                     int orderIndex = currentNode - numVehicles;
                     var order = orders[orderIndex];
                     assignedOrderIndexes.Add(orderIndex);
+                    routeOrderIndexes.Add(orderIndex);
 
                     DateTimeOffset arriveTime = baseTime.AddMinutes(arrival);
                     DateTimeOffset serviceStart = baseTime.AddMinutes(cumul);
@@ -435,6 +468,7 @@ public class OrToolsVrpSolver
             {
                 totalDistance += routeDist;
                 totalAssignedOrders += stops.Count;
+                ordersVisitedByEngineer[i] = stops.Count;
                 if (hasOrders) activeEngineersWithOrders++;
 
                 routes.Add(new EngineerRouteDto(
@@ -443,7 +477,8 @@ public class OrToolsVrpSolver
                     Transport: eng.Transport,
                     TotalOrders: stops.Count,
                     TotalDistanceKm: Math.Round(routeDist, 2),
-                    BaselineDistanceKm: Math.Round(routeDist * 1.25, 2),
+                    BaselineDistanceKm: Math.Round(
+                        BaselinePlanner.ComputeRouteBaseline(i, orders, routeOrderIndexes, numVehicles, vDistance), 2),
                     TotalTravelMinutes: (int)routeTravelMinutes,
                     Stops: stops,
                     EncodedPolyline: null,
@@ -458,11 +493,11 @@ public class OrToolsVrpSolver
             if (assignedOrderIndexes.Contains(j)) continue;
 
             var order = orders[j];
-            var (reasonCode, reasonDescription) = DetermineUnassignedReason(order, engineers);
+            var (reasonCode, reasonDescription) = DetermineUnassignedReason(order, engineers, ordersVisitedByEngineer);
             unassigned.Add(new UnassignedOrderDto(order.ExternalId, order.Address, reasonCode, reasonDescription));
         }
 
-        double baselineDistance = totalDistance * 1.25;
+        double baselineDistance = globalBaseline.TotalDistanceKm;
         double savedPercent = baselineDistance > 0 ? (baselineDistance - totalDistance) / baselineDistance * 100 : 0;
 
         var metrics = new PlanComparisonMetricsDto(
@@ -470,8 +505,8 @@ public class OrToolsVrpSolver
             AssignedOrders: totalAssignedOrders,
             UnassignedOrders: unassigned.Count,
             OptimizedActiveEngineers: activeEngineersWithOrders,
-            BaselineActiveEngineers: engineers.Count,
-            SavedEngineersCount: Math.Max(0, engineers.Count - activeEngineersWithOrders),
+            BaselineActiveEngineers: globalBaseline.ActiveEngineers,
+            SavedEngineersCount: Math.Max(0, globalBaseline.ActiveEngineers - activeEngineersWithOrders),
             OptimizedTotalDistanceKm: Math.Round(totalDistance, 2),
             BaselineTotalDistanceKm: Math.Round(baselineDistance, 2),
             DistanceEconomyPercent: Math.Round(savedPercent, 2));
@@ -481,17 +516,49 @@ public class OrToolsVrpSolver
 
     private (UnassignedReasonCode code, string description) DetermineUnassignedReason(
         WorkOrderInputDto order,
-        IReadOnlyList<EngineerInputDto> engineers)
+        IReadOnlyList<EngineerInputDto> engineers,
+        int[] ordersVisitedByEngineer)
     {
-        bool skillOk = engineers.Any(e => e.Skills != null && e.Skills.Contains(order.RequiredSkill));
-        if (!skillOk)
-            return (UnassignedReasonCode.NoQualifiedEngineer, $"Нет квалифицированного инженера с навыком '{order.RequiredSkill}'.");
+        // Подходящие по жёстким ограничениям бригады (навык + транспорт + оборудование).
+        var addressed = engineers
+            .Select((engineer, index) => (engineer, index))
+            .Where(x => x.engineer.Skills != null && x.engineer.Skills.Contains(order.RequiredSkill))
+            .Where(x => order.RequiredTransport == null || x.engineer.Transport == order.RequiredTransport)
+            .Where(x => order.RequiredEquipment is not { Count: > 0 } ||
+                        (x.engineer.Equipment != null && order.RequiredEquipment.All(r => x.engineer.Equipment.Contains(r))))
+            .ToList();
 
-        if (order.RequiredTransport != null)
+        if (addressed.Count == 0)
         {
-            bool transportOk = engineers.Any(e => e.Transport == order.RequiredTransport);
-            if (!transportOk)
-                return (UnassignedReasonCode.NoTransportMatch, $"Нет инженера с подходящим транспортом '{order.RequiredTransport}'.");
+            if (order.RequiredEquipment is { Count: > 0 } &&
+                !engineers.Any(e => e.Equipment != null && order.RequiredEquipment.All(r => e.Equipment.Contains(r))))
+            {
+                return (UnassignedReasonCode.NoQualifiedEngineer,
+                    $"Нет инженера со всем необходимым оборудованием: {string.Join(", ", order.RequiredEquipment)}.");
+            }
+
+            if (!engineers.Any(e => e.Skills != null && e.Skills.Contains(order.RequiredSkill)))
+            {
+                return (UnassignedReasonCode.NoQualifiedEngineer, $"Нет квалифицированного инженера с навыком '{order.RequiredSkill}'.");
+            }
+
+            if (order.RequiredTransport != null)
+            {
+                bool transportOk = engineers.Any(e => e.Transport == order.RequiredTransport);
+                if (!transportOk)
+                {
+                    return (UnassignedReasonCode.NoTransportMatch, $"Нет инженера с подходящим транспортом '{order.RequiredTransport}'.");
+                }
+            }
+        }
+
+        // Фаза C: если все подходящие бригады уже исчерпали лимит смены — ShiftLimitExceeded.
+        if (addressed.Count > 0 &&
+            addressed.All(x => x.engineer.MaxOrdersPerShift > 0 &&
+                               ordersVisitedByEngineer[x.index] >= x.engineer.MaxOrdersPerShift))
+        {
+            return (UnassignedReasonCode.ShiftLimitExceeded,
+                "Все подходящие инженеры исчерпали дневной лимит заказов (MaxOrdersPerShift).");
         }
 
         return (UnassignedReasonCode.TimeWindowMissed, "Заявка превышает временное окно или доступную смену инженеров.");

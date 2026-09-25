@@ -15,5 +15,6 @@ public record EngineerInputDto(
     int MaxOrdersPerShift = 15,
     DateTimeOffset? LunchStart = null,
     DateTimeOffset? LunchEnd = null,
-    int LunchDurationMinutes = 60
+    int LunchDurationMinutes = 60,
+    List<string>? Equipment = null
 );

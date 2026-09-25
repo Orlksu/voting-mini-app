@@ -21,4 +21,10 @@ public record WorkOrderInputDto
     public int DurationMinutes { get; set; } = 30;
     /// <summary>Статус заявки. Завершённые/отменённые заявки в планирование не попадают.</summary>
     public OrderStatus Status { get; set; } = OrderStatus.NotDispatched;
+
+    /// <summary>
+    /// Требуемое оборудование (Фаза C). Заявку может выполнить только бригада,
+    /// у которой есть ВСЁ перечисленное оборудование. Пустой список = нет требований.
+    /// </summary>
+    public List<string> RequiredEquipment { get; set; } = [];
 }

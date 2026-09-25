@@ -15,5 +15,6 @@ public record EngineerRouteDto(
     List<BreakStopDto> BreakStops,
     string? StartAddress = null,
     double? StartLatitude = null,
-    double? StartLongitude = null
+    double? StartLongitude = null,
+    string? RouteGeoJson = null
 );

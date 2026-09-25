@@ -136,12 +136,12 @@ public class OptimizationController : ControllerBase
         _logger.LogInformation("Job {JobId}: перепланирование ({EventType}) на {EventTime}",
             job.JobId, request.EventType, request.EventTime);
 
-        RunJob(job.JobId, planRequest);
+        RunJob(job.JobId, planRequest, request.EventType);
 
         return AcceptedAtAction(nameof(GetJobStatus), new { jobId = job.JobId }, job);
     }
 
-    private void RunJob(Guid jobId, CreateOptimizationPlanRequest request)
+    private void RunJob(Guid jobId, CreateOptimizationPlanRequest request, RescheduleEventType? eventType = null)
     {
         _ = Task.Run(async () =>
         {
@@ -149,6 +149,25 @@ public class OptimizationController : ControllerBase
             try
             {
                 var result = await _optimizer.OptimizeAsync(request, CancellationToken.None);
+
+                // Фаза D: при внезапной аварии (перепланирование) заявки, не вошедшие в новый план
+                // из-за срочности, помечаем причиной «вытеснена срочной заявкой».
+                if (eventType == RescheduleEventType.NewUrgentOrder)
+                {
+                    result = result with
+                    {
+                        UnassignedOrders = result.UnassignedOrders
+                            .Select(u => u.ReasonCode == UnassignedReasonCode.TimeWindowMissed
+                                ? u with
+                                {
+                                    ReasonCode = UnassignedReasonCode.EmergencyDisplaced,
+                                    ReasonDescription = "Заявка вытеснена срочной (авария) при перепланировании."
+                                }
+                                : u)
+                            .ToList()
+                    };
+                }
+
                 _jobStore.Complete(jobId, result);
             }
             catch (Exception ex)
