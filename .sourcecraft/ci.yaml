@@ -21,8 +21,27 @@ workflows:
         cubes:
           - name: build
             image: mcr.microsoft.com/dotnet/sdk:10.0
+            env:
+              NUGET_HTTP_TIMEOUT_IN_SECONDS: "300"
+              DOTNET_CLI_TELEMETRY_OPTOUT: "1"
             script:
-              - dotnet build backend/src/Backend.Api/Backend.Api.csproj --configuration Release
+              - |
+                for attempt in 1 2 3; do
+                  if dotnet restore backend/src/Backend.Api/Backend.Api.csproj \
+                    --runtime linux-x64 \
+                    --disable-parallel; then
+                    break
+                  fi
+                  if [ "$attempt" -eq 3 ]; then
+                    exit 1
+                  fi
+                  sleep 10
+                done
+              - |
+                dotnet build backend/src/Backend.Api/Backend.Api.csproj \
+                  --configuration Release \
+                  --runtime linux-x64 \
+                  --no-restore
 
       - name: staging-deploy
         cubes:
