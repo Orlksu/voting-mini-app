@@ -8,12 +8,12 @@ public record WorkOrderInputDto
 {
     public string ExternalId { get; set; } = string.Empty;
     public string? District { get; set; }
-    public DepotDto Depot { get; set; }
+    public DepotDto? Depot { get; set; }
     public string Address { get; set; } = string.Empty;
     public double? Latitude { get; set; }
     public double? Longitude { get; set; }
-    public DateTimeOffset WindowStart { get; set; }
-    public DateTimeOffset WindowEnd { get; set; }
+    public DateTimeOffset? WindowStart { get; set; }
+    public DateTimeOffset? WindowEnd { get; set; }
     public SkillType RequiredSkill { get; set; }
     public TransportType? RequiredTransport { get; set; }
     public OrderPriority Priority { get; set; }

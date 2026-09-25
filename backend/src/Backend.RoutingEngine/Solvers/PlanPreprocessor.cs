@@ -49,12 +49,16 @@ public static class PlanPreprocessor
 
             // Окно должно позволять выполнить работы целиком: ServiceStart ≥ WindowStart,
             // ServiceEnd ≤ WindowEnd → длительность не больше ширины окна.
-            double windowLengthMinutes = (order.WindowEnd - order.WindowStart).TotalMinutes;
-            if (duration > windowLengthMinutes)
+            // Если границ окна нет — ограничение не применяется.
+            if (order.WindowStart.HasValue && order.WindowEnd.HasValue)
             {
-                unassigned.Add(ToUnassigned(order, UnassignedReasonCode.TimeWindowMissed,
-                    $"Длительность работ ({duration} мин) превышает временное окно заявки ({Math.Ceiling(windowLengthMinutes)} мин)."));
-                continue;
+                double windowLengthMinutes = (order.WindowEnd.Value - order.WindowStart.Value).TotalMinutes;
+                if (duration > windowLengthMinutes)
+                {
+                    unassigned.Add(ToUnassigned(order, UnassignedReasonCode.TimeWindowMissed,
+                        $"Длительность работ ({duration} мин) превышает временное окно заявки ({Math.Ceiling(windowLengthMinutes)} мин)."));
+                    continue;
+                }
             }
 
             orders.Add(order with { DurationMinutes = duration });

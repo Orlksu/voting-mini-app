@@ -13,12 +13,18 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+      args:
+        DB_HOST: "${DB_HOST:-db}"
+        DB_PORT: "${DB_PORT:-5432}"
+        DB_NAME: "${POSTGRES_DB:-lctdb}"
+        DB_USER: "${POSTGRES_USER:-user}"
+        DB_PASSWORD: "${POSTGRES_PASSWORD:-password}"
     ports:
       - "5001:8080"
     restart: unless-stopped
     environment:
       ASPNETCORE_ENVIRONMENT: Development
-      ConnectionStrings__DefaultConnection: "Host=db;Port=5432;Database=lctdb;Username=user;Password=password"
+      ConnectionStrings__DefaultConnection: "Host=${DB_HOST:-db};Port=${DB_PORT:-5432};Database=${POSTGRES_DB:-lctdb};Username=${POSTGRES_USER:-user};Password=${POSTGRES_PASSWORD:-password}"
       Valhalla__BaseUrl: "http://valhalla:8002"
     depends_on:
       db:
@@ -29,9 +35,9 @@ services:
     container_name: lct-db
     restart: unless-stopped
     environment:
-      POSTGRES_USER: user
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: lctdb
+      POSTGRES_USER: "${POSTGRES_USER:-user}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-password}"
+      POSTGRES_DB: "${POSTGRES_DB:-lctdb}"
     ports:
       - "5432:5432"         # наружу пробрасываем, чтобы удобно подключаться из IDE
     volumes:

@@ -1,0 +1,67 @@
+on:
+  push:
+    - workflows: [staging]
+      filter:
+        branches: ["develop"]
+
+workflows:
+  staging:
+    tasks:
+      - name: frontend-checks
+        cubes:
+          - name: lint-and-build
+            image: node:20-alpine
+            script:
+              - cd frontend
+              - npm ci
+              - npm run lint
+              - npm run build
+
+      - name: backend-checks
+        cubes:
+          - name: build
+            image: mcr.microsoft.com/dotnet/sdk:10.0
+            script:
+              - dotnet build backend/src/Backend.Api/Backend.Api.csproj --configuration Release
+
+      - name: staging-deploy
+        cubes:
+          - name: deploy-over-ssh
+            image: alpine:3.20
+            env:
+              STAGING_HOST: ${{ secrets.STAGING_HOST }}
+              STAGING_USER: ${{ secrets.STAGING_USER }}
+              STAGING_SSH_PRIVATE_KEY: ${{ secrets.STAGING_SSH_PRIVATE_KEY }}
+              STAGING_KNOWN_HOSTS: ${{ secrets.STAGING_KNOWN_HOSTS }}
+            script:
+              - apk add --no-cache openssh-client curl
+              - mkdir -p "$HOME/.ssh"
+              - chmod 700 "$HOME/.ssh"
+              - printf '%s\n' "$STAGING_SSH_PRIVATE_KEY" > "$HOME/.ssh/staging_key"
+              - printf '%s\n' "$STAGING_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+              - chmod 600 "$HOME/.ssh/staging_key" "$HOME/.ssh/known_hosts"
+              - |
+                ssh -i "$HOME/.ssh/staging_key" \
+                  -o IdentitiesOnly=yes \
+                  "$STAGING_USER@$STAGING_HOST" 'bash -se' <<'REMOTE'
+                set -Eeuo pipefail
+                cd "$HOME/case-13-field-engineer-routing-team-97"
+                git fetch origin develop
+                git checkout -B develop origin/develop
+                test -f .env.staging
+                mkdir -p valhalla-data
+                docker compose --env-file .env.staging \
+                  -f docker-compose.yml \
+                  -f docker-compose.staging.yml \
+                  config --quiet
+                docker compose --env-file .env.staging \
+                  -f docker-compose.yml \
+                  -f docker-compose.staging.yml \
+                  up -d --build --remove-orphans
+                frontend_port="${STAGING_FRONTEND_PORT:-8080}"
+                backend_port="${STAGING_BACKEND_PORT:-5001}"
+                curl --fail --silent --show-error --retry 20 --retry-delay 3 \
+                  "http://127.0.0.1:${backend_port}/healthz" >/dev/null
+                curl --fail --silent --show-error --retry 20 --retry-delay 3 \
+                  "http://127.0.0.1:${frontend_port}/" >/dev/null
+                REMOTE

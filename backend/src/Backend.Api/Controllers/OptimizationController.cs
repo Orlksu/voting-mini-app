@@ -1,7 +1,6 @@
+using Backend.Api.Infrastructure.Repositories;
 using Backend.Api.Services;
-using Backend.Api.Services.WorkOrderService;
-using Backend.Api.Services.CsvParserService;
-using Backend.Api.Services.GeoCodingService;
+using Backend.Contracts.Domain.Entities;
 using Backend.Contracts.Domain.Enums;
 using Backend.Contracts.Interfaces;
 using Backend.Contracts.Requests;
@@ -16,37 +15,69 @@ public class OptimizationController : ControllerBase
 {
     private readonly IRouteOptimizer _optimizer;
     private readonly OptimizationJobStore _jobStore;
+    private readonly IEngineerRepository _engineers;
+    private readonly IWorkOrderRepository _workOrders;
     private readonly ILogger<OptimizationController> _logger;
-    private readonly ICsvParserService  _csvParserService;
-    private readonly IGeocoder  _geocodingService;
-    private readonly IWorkOrderService _workOrderService;
 
     public OptimizationController(
         IRouteOptimizer optimizer,
         OptimizationJobStore jobStore,
-        ILogger<OptimizationController> logger, 
-        ICsvParserService csvParserService, IGeocoder  geocoder, IWorkOrderService workOrderService)
+        IEngineerRepository engineers,
+        IWorkOrderRepository workOrders,
+        ILogger<OptimizationController> logger)
     {
         _optimizer = optimizer;
         _jobStore = jobStore;
+        _engineers = engineers;
+        _workOrders = workOrders;
         _logger = logger;
-        _csvParserService = csvParserService;
-        _geocodingService = geocoder;
-        _workOrderService = workOrderService;
     }
 
     /// <summary>
-    /// Постановка задачи в очередь расчета
+    /// Постановка задачи в очередь расчета на реальных данных из БД:
+    /// все доступные инженеры и все нераспределённые заявки.
     /// </summary>
     [HttpPost("jobs")]
     [ProducesResponseType<JobStatusResponseDto>(StatusCodes.Status202Accepted)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    public ActionResult<JobStatusResponseDto> CreateJob([FromBody] CreateOptimizationPlanRequest request)
+    public async Task<ActionResult<JobStatusResponseDto>> CreateJob(CancellationToken ct)
     {
-        if (request.Engineers.Count == 0 || request.Orders.Count == 0)
+        var engineers = (await _engineers.GetAllAsync(ct))
+            .Where(e => e.IsAvailable)
+            .Select(ToEngineerInputDto)
+            .ToList();
+
+        var orders = (await _workOrders.GetAllAsync(ct))
+            .Where(o => o.Status == OrderStatus.NotDispatched)
+            .Select(ToWorkOrderInputDto)
+            .ToList();
+
+        if (engineers.Count == 0)
+            return BadRequest("Нет доступных инженеров для оптимизации (проверьте /api/v1/engineers).");
+        if (orders.Count == 0)
+            return BadRequest("Нет нераспределённых заявок (проверьте /api/v1/workorders).");
+
+        var planDate = orders.Select(o => o.WindowStart).FirstOrDefault(w => w.HasValue) ?? DateTimeOffset.UtcNow;
+        var alignedEngineers = engineers.Select(e =>
         {
-            return BadRequest("Список инженеров и заявок не может быть пустым.");
-        }
+            var shiftDuration = e.ShiftEnd - e.ShiftStart;
+            if (shiftDuration <= TimeSpan.Zero)
+            {
+                shiftDuration += TimeSpan.FromDays(1);
+            }
+
+            var alignedStart = new DateTimeOffset(planDate.Year, planDate.Month, planDate.Day,
+                e.ShiftStart.Hour, e.ShiftStart.Minute, e.ShiftStart.Second, e.ShiftStart.Offset);
+            var alignedEnd = alignedStart + shiftDuration;
+            if (alignedEnd <= alignedStart)
+            {
+                alignedEnd = alignedEnd.AddDays(1);
+            }
+
+            return e with { ShiftStart = alignedStart, ShiftEnd = alignedEnd };
+        }).ToList();
+
+        var request = new CreateOptimizationPlanRequest(planDate, alignedEngineers, orders);
 
         _jobStore.SetLastEngineers(request.Engineers);
         var job = _jobStore.Create();
@@ -166,6 +197,39 @@ public class OptimizationController : ControllerBase
         return new CreateOptimizationPlanRequest(request.EventTime, updatedEngineers, orders);
     }
 
+    private static EngineerInputDto ToEngineerInputDto(Engineer e) => new(
+        e.ExternalId,
+        e.Name,
+        e.StartLocation.RawAddress,
+        e.StartLocation.Coordinates.Latitude,
+        e.StartLocation.Coordinates.Longitude,
+        e.Shift.Start,
+        e.Shift.End,
+        e.Transport,
+        [.. e.Skills],
+        e.MaxOrdersPerShift);
+
+    private static WorkOrderInputDto ToWorkOrderInputDto(WorkOrder o) => new()
+    {
+        ExternalId = o.ExternalId,
+        District = o.District,
+        Depot = new DepotDto(o.District, o.Location?.RawAddress ?? string.Empty,
+            o.Location?.Coordinates.Latitude ?? 0, o.Location?.Coordinates.Longitude ?? 0),
+        Address = o.Location?.RawAddress ?? string.Empty,
+        Latitude = o.Location?.Coordinates.Latitude,
+        Longitude = o.Location?.Coordinates.Longitude,
+        WindowStart = o.PreferredWindow.Start,
+        WindowEnd = o.PreferredWindow.End,
+        RequiredSkill = o.RequiredSkill,
+        RequiredTransport = o.RequiredTransport,
+        Priority = o.Priority,
+        TaskType = o.TaskType,
+        DurationMinutes = (int)o.ServiceDuration.TotalMinutes,
+    };
+
+    /// <summary>
+    /// Сэмпл-запрос для быстрой проверки распределения без БД.
+    /// </summary>
     [HttpGet("sample-request")]
     [ProducesResponseType<CreateOptimizationPlanRequest>(StatusCodes.Status200OK)]
     public ActionResult<CreateOptimizationPlanRequest> GetSampleRequest()
@@ -233,88 +297,5 @@ public class OptimizationController : ControllerBase
             }
         };
         return Ok(new CreateOptimizationPlanRequest(date, engineers, orders));
-        
     }
-
-    [HttpPost("upload-csv")]
-    [Consumes("multipart/form-data")]
-    [ProducesResponseType(StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status400BadRequest)]
-public async Task<IActionResult> UploadOrdersCsv(List<IFormFile> files, CancellationToken ct)
-{
-    if (files == null || files.Count == 0)
-        return BadRequest("Файлы не выбраны.");
-
-    var totalUnresolvedCount = 0;
-    var processedFilesCount = 0;
-
-    foreach (var file in files)
-    {
-        if (file.Length == 0)
-            continue;
-
-        await using var stream = file.OpenReadStream();
-        var parseData = await _csvParserService.ParseOrderAsync(stream, ct);
-
-        if (parseData.Orders.Count == 0)
-            continue; // Пропускаем файл без заявок, не ломая остальные
-
-        // 1. Геокодируем депо
-        DepotDto? finalDepot = null;
-        if (parseData.RawDepot != null && !string.IsNullOrWhiteSpace(parseData.RawDepot.Address))
-        {
-            var geoOffice = await _geocodingService.GeocodeAsync(parseData.RawDepot.Address, null, ct);
-            if (geoOffice != null)
-            {
-                // Название района берем из первой заявки или имени офиса
-                var district = parseData.Orders[0].District ?? "Неизвестный район";
-                finalDepot = new DepotDto(district, parseData.RawDepot.Address, geoOffice.Latitude, geoOffice.Longitude);
-            }
-        }
-
-        if (finalDepot == null)
-        {
-            // Без точки депо район рассчитывать нельзя
-            return BadRequest($"Не удалось определить координаты офиса для файла {file.FileName}.");
-        }
-
-        // 2. Геокодируем заявки и отсеиваем битые
-        var validOrders = new List<WorkOrderInputDto>();
-
-        foreach (var order in parseData.Orders)
-        {
-            if ((order.Latitude == null || order.Longitude == null) && !string.IsNullOrWhiteSpace(order.Address))
-            {
-                var geo = await _geocodingService.GeocodeAsync(order.Address, order.District, ct);
-                if (geo != null)
-                {
-                    order.Latitude = geo.Latitude;
-                    order.Longitude = geo.Longitude;
-                    validOrders.Add(order);
-                }
-                else
-                {
-                    totalUnresolvedCount++;
-                }
-            }
-            else if (order.Latitude != null && order.Longitude != null)
-            {
-                validOrders.Add(order);
-            }
-            else
-            {
-                totalUnresolvedCount++;
-            }
-        }
-        
-        await _workOrderService.AddFromImportAsync(finalDepot, validOrders, ct);
-        processedFilesCount++;
-    }
-
-    return Ok(new
-    {
-        ProcessedFiles = processedFilesCount,
-        UnresolvedAddressesCount = totalUnresolvedCount
-    });
-}
 }

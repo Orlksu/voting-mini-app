@@ -137,8 +137,15 @@ public class OrToolsVrpSolver
             var ord = orders[j];
             long index = manager.NodeToIndex(numVehicles + j);
 
-            long windowStart = (long)(ord.WindowStart - baseTime).TotalMinutes;
-            long windowEnd = (long)(ord.WindowEnd - baseTime).TotalMinutes;
+            // Препроцессор отсеивает заявки без окна, но защищаемся и здесь:
+            // без границ окна узел остаётся без ограничений по времени.
+            if (!ord.WindowStart.HasValue || !ord.WindowEnd.HasValue)
+            {
+                continue;
+            }
+
+            long windowStart = (long)(ord.WindowStart.Value - baseTime).TotalMinutes;
+            long windowEnd = (long)(ord.WindowEnd.Value - baseTime).TotalMinutes;
             long latestServiceStart = windowEnd - ord.DurationMinutes;
 
             timeDimension.CumulVar(index).SetRange(Math.Max(0, windowStart), Math.Max(0, latestServiceStart));

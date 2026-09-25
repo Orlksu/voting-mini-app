@@ -15,7 +15,9 @@ public class WorkOrderRepository(AppDbContext db) : IWorkOrderRepository
         var existing = await db.WorkOrders
             .Where(w => list.Select(o => o.ExternalId).Contains(w.ExternalId))
             .ToListAsync(ct);
-        var existingByKey = existing.ToDictionary(w => (w.ExternalId, w.District));
+        var existingByKey = existing
+            .GroupBy(w => (w.ExternalId, w.District))
+            .ToDictionary(g => g.Key, g => g.First());
 
         var processed = new HashSet<(string, string)>();
         foreach (var order in list)
@@ -42,6 +44,21 @@ public class WorkOrderRepository(AppDbContext db) : IWorkOrderRepository
         }
 
         await db.SaveChangesAsync(ct);
+    }
+
+    public async Task<List<WorkOrder>> GetAllAsync(CancellationToken ct = default)
+        => await db.WorkOrders.AsNoTracking().ToListAsync(ct);
+
+    public async Task<List<WorkOrder>> GetByExternalIdsAsync(IEnumerable<string> externalIds, CancellationToken ct = default)
+    {
+        var ids = externalIds.ToList();
+        if (ids.Count == 0)
+            return [];
+
+        return await db.WorkOrders
+            .AsNoTracking()
+            .Where(w => ids.Contains(w.ExternalId))
+            .ToListAsync(ct);
     }
 
     public async Task<List<WorkOrder>> GetNotDispatchedByDepotIdAsync(Guid depotId, CancellationToken ct = default)
