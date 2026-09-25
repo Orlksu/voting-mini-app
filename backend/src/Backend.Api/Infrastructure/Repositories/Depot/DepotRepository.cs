@@ -13,25 +13,48 @@ public class DepotRepository(AppDbContext db) : IDepotRepository
         => await db.Depots.AsNoTracking().FirstOrDefaultAsync(d => d.District == district, ct);
 
     public async Task<Depot> GetOrCreateAsync(string district, string address, double lat, double lon, CancellationToken ct = default)
+        => await GetOrCreateByLocationAsync(address, lat, lon, district, ct);
+
+    public async Task<Depot> GetOrCreateByLocationAsync(
+        string address,
+        double lat,
+        double lon,
+        string fallbackDistrict,
+        CancellationToken ct = default)
     {
-        var depot = await db.Depots.FirstOrDefaultAsync(d => d.District == district, ct);
+        var hasCoords = Math.Abs(lat) > 0.0001 || Math.Abs(lon) > 0.0001;
+        var hasAddress = !string.IsNullOrWhiteSpace(address);
+        
+        var depot = await db.Depots.FirstOrDefaultAsync(d =>
+            (hasAddress && d.Location != null && d.Location.RawAddress == address) ||
+            (hasCoords && d.Location != null && Math.Abs(d.Location.Coordinates.Latitude - lat) < 0.001
+                                             && Math.Abs(d.Location.Coordinates.Longitude - lon) < 0.001), ct);
+
         if (depot is null)
         {
-            depot = new Depot
+            // Если в БД есть запись по fallbackDistrict — обновляем её
+            depot = await db.Depots.FirstOrDefaultAsync(d => d.District == fallbackDistrict, ct);
+            if (depot != null)
             {
-                District = district,
-                Location = new Location { RawAddress = address, Coordinates = new GeoCoordinate(lat, lon) },
-            };
-            await db.Depots.AddAsync(depot, ct);
-        }
-        else if (depot.Location is null
-                 || !string.Equals(depot.Location.RawAddress, address, StringComparison.Ordinal)
-                 || depot.Location.Coordinates != new GeoCoordinate(lat, lon))
-        {
-            depot.Location = new Location { RawAddress = address, Coordinates = new GeoCoordinate(lat, lon) };
+                if (hasAddress || hasCoords)
+                {
+                    depot.Location = new Location { RawAddress = address, Coordinates = new GeoCoordinate(lat, lon) };
+                }
+            }
+            else
+            {
+                depot = new Depot
+                {
+                    District = fallbackDistrict,
+                    Location = (hasAddress || hasCoords)
+                        ? new Location { RawAddress = address, Coordinates = new GeoCoordinate(lat, lon) }
+                        : null
+                };
+                await db.Depots.AddAsync(depot, ct);
+            }
+            await db.SaveChangesAsync(ct);
         }
 
-        await db.SaveChangesAsync(ct);
         return depot;
     }
 

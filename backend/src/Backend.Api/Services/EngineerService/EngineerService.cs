@@ -35,11 +35,11 @@ public class EngineerService(IDepotRepository depots, IEngineerRepository engine
 
     public async Task<Engineer> AddAsync(string district, EngineerInputDto engineer, CancellationToken ct = default)
     {
-        var depot = await depots.GetOrCreateAsync(
-            district,
+        var depot = await depots.GetOrCreateByLocationAsync(
             engineer.StartAddress,
             engineer.StartLatitude ?? 0.0,
             engineer.StartLongitude ?? 0.0,
+            district,
             ct);
 
         var entity = new Engineer
@@ -71,11 +71,11 @@ public class EngineerService(IDepotRepository depots, IEngineerRepository engine
             return [];
 
         var firstWithCoords = dtoList.FirstOrDefault(e => e.StartLatitude.HasValue && e.StartLongitude.HasValue) ?? dtoList[0];
-        var depot = await depots.GetOrCreateAsync(
-            district,
+        var depot = await depots.GetOrCreateByLocationAsync(
             firstWithCoords.StartAddress,
             firstWithCoords.StartLatitude ?? 0.0,
             firstWithCoords.StartLongitude ?? 0.0,
+            district,
             ct);
 
         var entities = dtoList.Select(e => new Engineer
@@ -109,8 +109,22 @@ public class EngineerService(IDepotRepository depots, IEngineerRepository engine
         var depotsCreated = 0;
 
         var seenExternalIds = new HashSet<string>();
-        var districtDepots = new Dictionary<string, Depot>();
+        var locationDepots = new Dictionary<string, Depot>(StringComparer.OrdinalIgnoreCase);
+        var resolvedStartLocations = new Dictionary<string, Location?>(StringComparer.OrdinalIgnoreCase);
         var entities = new List<Engineer>();
+
+        // Пакетный предрасчет координат для всех уникальных адресов старта файла
+        var addressesNeedingGeo = rawEngineers
+            .Where(r => !string.IsNullOrWhiteSpace(r.StartAddress) 
+                     && (ParseCoordinate(r.StartLatitude) == null || ParseCoordinate(r.StartLongitude) == null))
+            .Select(r => (Address: r.StartAddress.Trim(), District: (string?)r.District?.Trim()))
+            .Distinct()
+            .ToList();
+
+        if (addressesNeedingGeo.Count > 0)
+        {
+            await geocoder.GeocodeBatchAsync(addressesNeedingGeo, ct);
+        }
 
         foreach (var raw in rawEngineers)
         {
@@ -130,23 +144,37 @@ public class EngineerService(IDepotRepository depots, IEngineerRepository engine
 
             var district = string.IsNullOrWhiteSpace(raw.District) ? "Неизвестный район" : raw.District.Trim();
 
-            if (!districtDepots.TryGetValue(district, out var depot))
+            var addrKey = $"{district}|{raw.StartAddress?.Trim()}|{raw.StartLatitude?.Trim()}|{raw.StartLongitude?.Trim()}";
+            if (!resolvedStartLocations.TryGetValue(addrKey, out var startLocation))
             {
-                depot = await depots.GetByDistrictAsync(district, ct);
-                if (depot is null)
-                {
-                    depot = await depots.EnsureExistsAsync(district, ct);
-                    depotsCreated++;
-                }
-                districtDepots[district] = depot;
+                startLocation = await ResolveStartLocationAsync(raw, district, ct);
+                resolvedStartLocations[addrKey] = startLocation;
             }
 
-            var startLocation = await ResolveStartLocationAsync(raw, depot, ct);
             if (startLocation is null)
             {
                 warnings.Add($"Не удалось определить координаты старта для инженера '{externalId}' — пропущено.");
                 unresolved++;
                 continue;
+            }
+
+            var depotKey = $"{startLocation.RawAddress}|{startLocation.Coordinates.Latitude:F4}|{startLocation.Coordinates.Longitude:F4}";
+            if (!locationDepots.TryGetValue(depotKey, out var depot))
+            {
+                var existingDepot = await depots.GetByDistrictAsync(district, ct);
+                depot = await depots.GetOrCreateByLocationAsync(
+                    startLocation.RawAddress,
+                    startLocation.Coordinates.Latitude,
+                    startLocation.Coordinates.Longitude,
+                    district,
+                    ct);
+
+                if (existingDepot is null)
+                {
+                    depotsCreated++;
+                }
+
+                locationDepots[depotKey] = depot;
             }
 
             var shiftStart = ParseShift(raw.ShiftStart);
@@ -200,7 +228,7 @@ public class EngineerService(IDepotRepository depots, IEngineerRepository engine
         var engineer = await engineers.GetByExternalIdAsync(externalId, ct);
         return engineer is null ? null : ToDto(engineer);
     }
-    private async Task<Location?> ResolveStartLocationAsync(EngineerCsvRowDto raw, Depot depot, CancellationToken ct)
+    private async Task<Location?> ResolveStartLocationAsync(EngineerCsvRowDto raw, string district, CancellationToken ct)
     {
         var lat = ParseCoordinate(raw.StartLatitude);
         var lon = ParseCoordinate(raw.StartLongitude);
@@ -208,7 +236,7 @@ public class EngineerService(IDepotRepository depots, IEngineerRepository engine
         {
             return new Location
             {
-                RawAddress = string.IsNullOrWhiteSpace(raw.StartAddress) ? depot.Location?.RawAddress ?? string.Empty : raw.StartAddress.Trim(),
+                RawAddress = string.IsNullOrWhiteSpace(raw.StartAddress) ? district : raw.StartAddress.Trim(),
                 Coordinates = new GeoCoordinate(lat.Value, lon.Value),
             };
         }
@@ -225,16 +253,30 @@ public class EngineerService(IDepotRepository depots, IEngineerRepository engine
                 };
             }
 
+            var existingDepot = await depots.GetByDistrictAsync(district, ct);
+            if (existingDepot?.Location != null)
+            {
+                return new Location
+                {
+                    RawAddress = raw.StartAddress.Trim(),
+                    Coordinates = existingDepot.Location.Coordinates,
+                };
+            }
+
             return null;
         }
 
-        return depot.Location is null
-            ? null
-            : new Location
+        var fallbackDepot = await depots.GetByDistrictAsync(district, ct);
+        if (fallbackDepot?.Location != null)
+        {
+            return new Location
             {
-                RawAddress = depot.Location.RawAddress,
-                Coordinates = depot.Location.Coordinates,
+                RawAddress = fallbackDepot.Location.RawAddress,
+                Coordinates = fallbackDepot.Location.Coordinates,
             };
+        }
+
+        return null;
     }
 
     private static DateTimeOffset? ParseShift(string value) =>

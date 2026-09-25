@@ -94,6 +94,12 @@ public class WorkOrderService(
             return 0;
 
         var fallbackDistrict = string.IsNullOrWhiteSpace(depotDto.Name) ? "Основной район" : depotDto.Name.Trim();
+        var centralDepot = await depots.GetOrCreateByLocationAsync(
+            depotDto.Address, depotDto.Latitude, depotDto.Longitude, fallbackDistrict, ct);
+
+        var depotLatitude = centralDepot.Location?.Coordinates.Latitude;
+        var depotLongitude = centralDepot.Location?.Coordinates.Longitude;
+
         var ordersByDistrict = orders
             .GroupBy(o => string.IsNullOrWhiteSpace(o.District) ? fallbackDistrict : o.District.Trim())
             .ToList();
@@ -104,11 +110,6 @@ public class WorkOrderService(
         {
             var district = districtGroup.Key;
 
-            var depot = await depots.GetOrCreateAsync(district, depotDto.Address, depotDto.Latitude, depotDto.Longitude, ct);
-
-            var depotLatitude = depot.Location?.Coordinates.Latitude;
-            var depotLongitude = depot.Location?.Coordinates.Longitude;
-
             foreach (var o in districtGroup)
             {
                 var latitude = o.Latitude ?? depotLatitude;
@@ -117,7 +118,7 @@ public class WorkOrderService(
                 {
                     logger.LogWarning(
                         "Заявка {ExternalId} пропущена: нет координат, а у депо {DepotId} ({District}) отсутствует локация.",
-                        o.ExternalId, depot.Id, district);
+                        o.ExternalId, centralDepot.Id, district);
                     continue;
                 }
 
@@ -140,7 +141,7 @@ public class WorkOrderService(
                     Priority = o.Priority,
                     Status = OrderStatus.NotDispatched,
                     TaskType = o.TaskType,
-                    DepotId = depot.Id,
+                    DepotId = centralDepot.Id,
                 });
             }
         }

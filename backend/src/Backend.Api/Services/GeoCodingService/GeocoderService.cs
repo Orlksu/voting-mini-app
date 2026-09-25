@@ -96,33 +96,51 @@ public class GeocoderService(HttpClient httpClient, IGeocodeCacheRepository cach
 
     public async Task<(GeocoderResultDto? Result, bool IsHttpSuccess)> QueryNominatimWithStatusAsync(string query, CancellationToken ct)
     {
-        try
+        const string regionViewbox = "36.0,56.8,39.5,54.3";
+        var url = $"/search?q={Uri.EscapeDataString(query)}&format=json&limit=1&countrycodes=ru&viewbox={regionViewbox}&bounded=1";
+
+        for (int attempt = 0; attempt < 2; attempt++)
         {
-            
-            const string regionViewbox = "36.0,56.8,39.5,54.3";
-            var url = $"/search?q={Uri.EscapeDataString(query)}&format=json&limit=1&countrycodes=ru&viewbox={regionViewbox}&bounded=1";
-
-            await NominatimRateLimiter.WaitAsync(ct);
-
-            using var response = await httpClient.GetAsync(url, ct);
-            if (!response.IsSuccessStatusCode)
+            try
             {
-                logger.LogWarning("Nominatim вернул статус {StatusCode} для запроса \"{Query}\"", response.StatusCode, query);
+                await NominatimRateLimiter.WaitAsync(ct);
+
+                using var response = await httpClient.GetAsync(url, ct);
+                if ((int)response.StatusCode == 429 && attempt == 0)
+                {
+                    logger.LogWarning("Nominatim вернул статус 429 (Too Many Requests), повторная попытка через 1.5с для запроса \"{Query}\"", query);
+                    await Task.Delay(1500, ct);
+                    continue;
+                }
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    logger.LogWarning("Nominatim вернул статус {StatusCode} для запроса \"{Query}\"", response.StatusCode, query);
+                    return (null, false);
+                }
+
+                var results = await response.Content.ReadFromJsonAsync<List<GeocoderResultDto>>(ct);
+                return (results?.FirstOrDefault(), true);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                if (attempt == 0)
+                {
+                    logger.LogWarning(ex, "Сбой при обращении к Nominatim, повторная попытка через 1с для \"{Query}\"", query);
+                    await Task.Delay(1000, ct);
+                    continue;
+                }
+
+                logger.LogWarning(ex, "Ошибка геокодирования запроса \"{Query}\"", query);
                 return (null, false);
             }
+        }
 
-            var results = await response.Content.ReadFromJsonAsync<List<GeocoderResultDto>>(ct);
-            return (results?.FirstOrDefault(), true);
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            logger.LogWarning(ex, "Ошибка геокодирования запроса \"{Query}\"", query);
-            return (null, false);
-        }
+        return (null, false);
     }
 
     public async Task<GeocoderResultDto?> QueryNominatimAsync(string query, CancellationToken ct)
@@ -305,7 +323,8 @@ public class GeocoderService(HttpClient httpClient, IGeocodeCacheRepository cach
         if (string.IsNullOrWhiteSpace(houseRaw))
             return variants;
 
-        string cleanHouse = Regex.Replace(houseRaw, @"\s*к(?:орп)?\.?\s*(\d+)", "к$1", RegexOptions.IgnoreCase);
+        string cleanHouse = Regex.Replace(houseRaw, @"(\d+)\s*с(?![а-яa-z])\.?\s*(\d+)", "$1 стр $2", RegexOptions.IgnoreCase);
+        cleanHouse = Regex.Replace(cleanHouse, @"\s*к(?:орп)?\.?\s*(\d+)", "к$1", RegexOptions.IgnoreCase);
         cleanHouse = Regex.Replace(cleanHouse, @"\s*стр\.?\s*(\d+)", " стр $1", RegexOptions.IgnoreCase);
         cleanHouse = Regex.Replace(cleanHouse, @"\s+", " ").Trim(' ', ',');
 
