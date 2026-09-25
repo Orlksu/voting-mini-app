@@ -11,5 +11,8 @@ public record EngineerRouteDto(
     double BaselineDistanceKm,
     int TotalTravelMinutes,
     List<RouteStopDto> Stops,
-    string? EncodedPolyline
+    string? EncodedPolyline,
+    string? StartAddress = null,
+    double? StartLatitude = null,
+    double? StartLongitude = null
 );

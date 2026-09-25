@@ -57,7 +57,17 @@ public class OptimizationController : ControllerBase
         if (orders.Count == 0)
             return BadRequest("Нет нераспределённых заявок (проверьте /api/v1/workorders).");
 
-        var request = new CreateOptimizationPlanRequest(DateTimeOffset.UtcNow, engineers, orders);
+        var planDate = orders.Select(o => o.WindowStart).FirstOrDefault(w => w.HasValue) ?? DateTimeOffset.UtcNow;
+        var alignedEngineers = engineers.Select(e =>
+        {
+            var shiftDuration = e.ShiftEnd - e.ShiftStart;
+            var alignedStart = new DateTimeOffset(planDate.Year, planDate.Month, planDate.Day,
+                e.ShiftStart.Hour, e.ShiftStart.Minute, e.ShiftStart.Second, e.ShiftStart.Offset);
+            var alignedEnd = alignedStart + shiftDuration;
+            return e with { ShiftStart = alignedStart, ShiftEnd = alignedEnd };
+        }).ToList();
+
+        var request = new CreateOptimizationPlanRequest(planDate, alignedEngineers, orders);
 
         _jobStore.SetLastEngineers(request.Engineers);
         var job = _jobStore.Create();
