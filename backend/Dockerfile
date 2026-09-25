@@ -1,15 +1,30 @@
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+ARG TARGETARCH
 WORKDIR /src
 
 COPY ["src/Backend.Contracts/Backend.Contracts.csproj", "src/Backend.Contracts/"]
 COPY ["src/Backend.RoutingEngine/Backend.RoutingEngine.csproj", "src/Backend.RoutingEngine/"]
 COPY ["src/Backend.Api/Backend.Api.csproj", "src/Backend.Api/"]
 
-RUN dotnet restore "src/Backend.Api/Backend.Api.csproj"
+RUN case "$TARGETARCH" in \
+      amd64) rid=linux-x64 ;; \
+      arm64) rid=linux-arm64 ;; \
+      *) echo "Unsupported Docker architecture: $TARGETARCH" >&2; exit 1 ;; \
+    esac && \
+    printf '%s' "$rid" > /tmp/target-rid
+
+RUN dotnet restore "src/Backend.Api/Backend.Api.csproj" \
+      --runtime "$(cat /tmp/target-rid)"
 
 COPY . .
 
-RUN dotnet publish "src/Backend.Api/Backend.Api.csproj" -c Release -o /app/publish /p:UseAppHost=false
+RUN dotnet publish "src/Backend.Api/Backend.Api.csproj" \
+      -c Release \
+      -r "$(cat /tmp/target-rid)" \
+      --self-contained false \
+      -o /app/publish \
+      /p:UseAppHost=false \
+      --no-restore
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
 WORKDIR /app
