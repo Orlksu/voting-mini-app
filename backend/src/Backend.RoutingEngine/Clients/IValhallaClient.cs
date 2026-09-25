@@ -18,6 +18,16 @@ public interface IValhallaClient
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Прямой запрос матрицы у Valhalla без Haversine-фолбэка.
+    /// Возвращает null, если Valhalla недоступна или ответила ошибкой (например,
+    /// costing "transit" отсутствует в графе — нет GTFS) — вызывающий решает, как деградировать.
+    /// </summary>
+    Task<ValhallaMatrix?> TryGetMatrixAsync(
+        IReadOnlyList<Location> locations,
+        string costing = "auto",
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Получение детальной геометрии маршрута (GeoJSON) для отображения на фронтенде
     /// </summary>
     Task<string?> GetRouteGeoJsonAsync(

@@ -18,6 +18,12 @@ namespace Backend.RoutingEngine.Solvers;
 /// </summary>
 public sealed class ValhallaMatrixProvider : IRouteMatrixProvider
 {
+    /// <summary>
+    /// Замедление времени auto-маршрута для «прокси» общественного транспорта:
+    /// автобус/троллейбус едут по тем же дорогам, но медленнее авто (остановки, ожидание, пересадки).
+    /// </summary>
+    private const double TransitAutoSlowdown = 1.3;
+
     private readonly IValhallaClient _valhalla;
     private readonly HaversineMatrixProvider _haversine;
     private readonly ILogger<ValhallaMatrixProvider> _logger;
@@ -67,7 +73,7 @@ public sealed class ValhallaMatrixProvider : IRouteMatrixProvider
                     .Concat(orderLocations.Select(ToLocation))
                     .ToArray();
 
-                ValhallaMatrix matrix = await _valhalla.GetMatrixAsync(requestLocations, costing, cancellationToken);
+                var (matrix, usedCosting) = await FetchGroupMatrixAsync(requestLocations, costing, cancellationToken);
 
                 // Строки матрицы Valhalla: [0..members.Count-1] — старты бригад группы,
                 // затем все заявки. Копируем их в пер-бригадные матрицы (для каждой бригады группы).
@@ -89,7 +95,7 @@ public sealed class ValhallaMatrixProvider : IRouteMatrixProvider
                 }
 
                 _logger.LogInformation("Valhalla matrix ready for transport {Transport} ({Costing}): {Members} engineers, {Orders} orders",
-                    group.Key, costing, members.Count, orders);
+                    group.Key, usedCosting, members.Count, orders);
             }
         }
         catch (OperationCanceledException)
@@ -103,6 +109,52 @@ public sealed class ValhallaMatrixProvider : IRouteMatrixProvider
         }
 
         return new RouteMatrices(distances, times);
+    }
+
+    /// <summary>
+    /// Запрашивает матрицу для группы бригад конкретного costing.
+    /// Для "transit" применяется деградация: try transit → при недоступности (в графе нет GTFS)
+    /// auto-маршрут с замедлением ×1.3 как прокси общественного транспорта → иначе Haversine-фолбэк.
+    /// </summary>
+    private async Task<(ValhallaMatrix Matrix, string UsedCosting)> FetchGroupMatrixAsync(
+        IReadOnlyList<Location> requestLocations,
+        string costing,
+        CancellationToken cancellationToken)
+    {
+        if (costing == "transit")
+        {
+            ValhallaMatrix? transit = await _valhalla.TryGetMatrixAsync(requestLocations, "transit", cancellationToken);
+            if (transit != null)
+            {
+                return (transit, "transit");
+            }
+
+            _logger.LogWarning(
+                "Transit costing unavailable in Valhalla (no GTFS); using road (auto) proxy with {Factor}x slowdown",
+                TransitAutoSlowdown);
+
+            ValhallaMatrix? auto = await _valhalla.TryGetMatrixAsync(requestLocations, "auto", cancellationToken);
+            if (auto != null)
+            {
+                ScaleTimes(auto, TransitAutoSlowdown);
+                return (auto, $"transit→auto x{TransitAutoSlowdown}");
+            }
+        }
+
+        ValhallaMatrix matrix = await _valhalla.GetMatrixAsync(requestLocations, costing, cancellationToken);
+        return (matrix, costing);
+    }
+
+    private static void ScaleTimes(ValhallaMatrix matrix, double factor)
+    {
+        int n = matrix.TimeSeconds.GetLength(0);
+        for (int i = 0; i < n; i++)
+        {
+            for (int j = 0; j < n; j++)
+            {
+                matrix.TimeSeconds[i, j] *= factor;
+            }
+        }
     }
 
     /// <summary>
