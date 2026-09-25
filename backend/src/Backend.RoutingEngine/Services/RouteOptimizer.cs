@@ -42,9 +42,11 @@ public class RouteOptimizer : IRouteOptimizer
                 return OrToolsVrpSolver.BuildEmptyResult(request.PlanDate, preprocess.Engineers, preprocess.Orders, preprocess.Unassigned);
             }
 
-            // 2. Матрицы расстояний/времени (Фаза A: Haversine; Фаза B: Valhalla).
+            // 2. Матрицы расстояний/времени (Фаза B: Valhalla с costing по транспорту,
+            //    фолбэк — Haversine). Пер-бригадные: каждая бригада ездит в costing своего транспорта.
             var locations = PlanPreprocessor.BuildLocations(preprocess.Engineers, preprocess.Orders);
-            var matrices = await _matrixProvider.BuildAsync(locations, cancellationToken);
+            var vehicleTransports = preprocess.Engineers.Select(e => e.Transport).ToList();
+            var matrices = await _matrixProvider.BuildAsync(locations, vehicleTransports, cancellationToken);
 
             // 3. Каскадные окна обедов (пока одни едят — другие работают).
             var lunchWindows = preprocess.Engineers

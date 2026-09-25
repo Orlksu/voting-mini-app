@@ -1,8 +1,11 @@
+using Backend.Contracts.Domain.Enums;
+
 namespace Backend.RoutingEngine.Solvers;
 
 /// <summary>
 /// Haversine-матрицы: расстояние по прямой (км), время из средней скорости (мин).
-/// Заглушка для Фазы A; во Фазе B заменяется/дополняется Valhalla.
+/// Фолбэк Фазы B, когда Valhalla недоступна. Матрица одинаковая для всех бригад
+/// (Haversine не зависит от транспорта), поэтому базовая матрица клонируется по-bridged.
 /// </summary>
 public sealed class HaversineMatrixProvider : IRouteMatrixProvider
 {
@@ -12,11 +15,14 @@ public sealed class HaversineMatrixProvider : IRouteMatrixProvider
 
     public Task<RouteMatrices> BuildAsync(
         IReadOnlyList<(double Lat, double Lon)> locations,
+        IReadOnlyList<TransportType> vehicleTransports,
         CancellationToken cancellationToken = default)
     {
         int count = locations.Count;
-        var distance = new double[count, count];
-        var time = new long[count, count];
+        int vehicles = vehicleTransports.Count;
+
+        var baseDistance = new double[count, count];
+        var baseTime = new long[count, count];
 
         for (int i = 0; i < count; i++)
         {
@@ -27,12 +33,20 @@ public sealed class HaversineMatrixProvider : IRouteMatrixProvider
                 cancellationToken.ThrowIfCancellationRequested();
 
                 double d = HaversineKm(locations[i].Lat, locations[i].Lon, locations[j].Lat, locations[j].Lon);
-                distance[i, j] = Math.Round(d, 2);
-                time[i, j] = (long)Math.Ceiling(d / AverageSpeedKmh * 60.0);
+                baseDistance[i, j] = Math.Round(d, 2);
+                baseTime[i, j] = (long)Math.Ceiling(d / AverageSpeedKmh * 60.0);
             }
         }
 
-        return Task.FromResult(new RouteMatrices(distance, time));
+        var distances = new double[vehicles][,];
+        var times = new long[vehicles][,];
+        for (int v = 0; v < vehicles; v++)
+        {
+            distances[v] = (double[,])baseDistance.Clone();
+            times[v] = (long[,])baseTime.Clone();
+        }
+
+        return Task.FromResult(new RouteMatrices(distances, times));
     }
 
     private static double HaversineKm(double lat1, double lon1, double lat2, double lon2)

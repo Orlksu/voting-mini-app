@@ -23,10 +23,16 @@ namespace Backend.RoutingEngine.Solvers;
 ///    а времена прибытия/работ остаются модельными (не разъезжаются с окнами).
 ///  — жёсткие ограничения (навык/транспорт) — через сужение домена VehicleVar;
 ///  — мягкие — пропуск заявки с приоритетным штрафом (Авария ≫ Подключение ≫ Ремонт/Дозаказ).
+///  — Фаза B: пер-бригадные матрицы (costing транспорта через Valhalla); транзит и арк-косты
+///    задаются по-бригадно (SetArcCostEvaluatorOfVehicle + AddDimensionWithVehicleTransits).
 /// </summary>
 public class OrToolsVrpSolver
 {
-    private const long UnassignedPenaltyBase = 100_000;
+    // Максимум выполненных заявок — строго первичен («больше заявок важнее, чем меньше бригад»):
+    // пенальти за пропуск должна перевешивать любую сумму фикс-стоимостей бригад
+    // (VehicleFixedCost × размер парка) и весь транзит. 5_000_000 ≫ 30 бригад × 50_000 = 1_500_000.
+    // Минимум бригад (VehicleFixedCost) — tie-break только внутри равного числа выполненных заявок.
+    private const long UnassignedPenaltyBase = 5_000_000;
     private const long VehicleFixedCost = 50_000;
     private const long MaxHorizonMinutes = 24 * 60;
     private const int DefaultTimeLimitSeconds = 15;
@@ -69,8 +75,8 @@ public class OrToolsVrpSolver
 
         var baseTime = engineers.Min(e => e.ShiftStart);
 
-        long[,] timeMatrix = matrices.TimeMinutes;
-        double[,] distanceMatrix = matrices.DistanceKm;
+        long[][,] timeMatrix = matrices.TimeMinutes;
+        double[][,] distanceMatrix = matrices.DistanceKm;
 
         // Длительности обслуживания по стопам: заявки (норматив) затем обеды.
         var serviceByStop = new int[numStops];
@@ -89,30 +95,39 @@ public class OrToolsVrpSolver
         // физических дорог не имеют — транзит по ним нулевой.
         int numMatrixPoints = numVehicles + numOrders;
 
-        int transitCallbackIndex = routing.RegisterTransitCallback((long fromIndex, long toIndex) =>
+        // Фаза B: транзит по-бригадный — каждая бригада ездит в costing своего транспорта,
+        // поэтому у каждой бригады своя матрица времени (RouteMatrices.TimeMinutes[vehicle]).
+        var vehicleTransitCallbacks = new int[numVehicles];
+        for (int v = 0; v < numVehicles; v++)
         {
-            int fromNode = manager.IndexToNode(fromIndex);
-            int toNode = manager.IndexToNode(toIndex);
-
-            long travelTime = fromNode >= numMatrixPoints || toNode >= numMatrixPoints
-                ? 0
-                : timeMatrix[fromNode, toNode];
-
-            long serviceTime = 0;
-            if (fromNode >= numVehicles && fromNode < numLocations)
+            long[,] vTime = timeMatrix[v];
+            int cb = routing.RegisterTransitCallback((long fromIndex, long toIndex) =>
             {
-                serviceTime = serviceByStop[fromNode - numVehicles];
-            }
+                int fromNode = manager.IndexToNode(fromIndex);
+                int toNode = manager.IndexToNode(toIndex);
 
-            return travelTime + serviceTime;
-        });
+                long travelTime = fromNode >= numMatrixPoints || toNode >= numMatrixPoints
+                    ? 0
+                    : vTime[fromNode, toNode];
 
-        routing.SetArcCostEvaluatorOfAllVehicles(transitCallbackIndex);
+                long serviceTime = 0;
+                if (fromNode >= numVehicles && fromNode < numLocations)
+                {
+                    serviceTime = serviceByStop[fromNode - numVehicles];
+                }
+
+                return travelTime + serviceTime;
+            });
+            vehicleTransitCallbacks[v] = cb;
+            routing.SetArcCostEvaluatorOfVehicle(cb, v);
+        }
+
         routing.SetFixedCostOfAllVehicles(VehicleFixedCost);
 
         // Временная дименсия: горизонт 24 ч от baseTime, ожидание (slack) до 24 ч на дуге.
-        routing.AddDimension(
-            transitCallbackIndex,
+        // Дименсия учитывает разный transit по бригадам (AddDimensionWithVehicleTransits).
+        routing.AddDimensionWithVehicleTransits(
+            vehicleTransitCallbacks,
             slack_max: MaxHorizonMinutes,
             capacity: MaxHorizonMinutes,
             fix_start_cumul_to_zero: false,
@@ -304,8 +319,8 @@ public class OrToolsVrpSolver
         RoutingModel routing,
         Assignment solution,
         RoutingDimension timeDimension,
-        double[,] distanceMatrix,
-        long[,] timeMatrix,
+        double[][,] distanceMatrix,
+        long[][,] timeMatrix,
         DateTimeOffset baseTime,
         IReadOnlyList<UnassignedOrderDto> preUnassigned)
     {
@@ -320,12 +335,6 @@ public class OrToolsVrpSolver
         // Точки, для которых есть матрицы (старты + заявки). Обеды и концы — без дорог.
         int numMatrixPoints = numVehicles + numOrders;
 
-        long TravelMinutes(int from, int to) =>
-            from >= numMatrixPoints || to >= numMatrixPoints ? 0 : timeMatrix[from, to];
-
-        double DistanceKm(int from, int to) =>
-            from >= numMatrixPoints || to >= numMatrixPoints ? 0 : distanceMatrix[from, to];
-
         // Выезд бригады (смена может начинаться позже начала; фиксируем по cumul стартового узла).
         // Прибытие в стоп считаем инкрементально: cumul предыдущего стопа + его обслуживание + дорога.
         // (SlackVar в возвращаемом Assignment не сохраняется — прибытие вычисляем, а не читаем.)
@@ -337,6 +346,15 @@ public class OrToolsVrpSolver
         for (int i = 0; i < numVehicles; i++)
         {
             var eng = engineers[i];
+            double[,] vDistance = distanceMatrix[i];
+            long[,] vTime = timeMatrix[i];
+
+            long TravelMinutes(int from, int to) =>
+                from >= numMatrixPoints || to >= numMatrixPoints ? 0 : vTime[from, to];
+
+            double DistanceKm(int from, int to) =>
+                from >= numMatrixPoints || to >= numMatrixPoints ? 0 : vDistance[from, to];
+
             var stops = new List<RouteStopDto>();
             var breaks = new List<BreakStopDto>();
 

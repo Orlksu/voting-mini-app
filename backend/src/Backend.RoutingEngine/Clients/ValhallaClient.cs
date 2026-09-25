@@ -8,6 +8,8 @@ namespace Backend.RoutingEngine.Clients;
 
 public class ValhallaClient : IValhallaClient
 {
+    private const double UnreachableSeconds = 24 * 3600.0;
+
     private readonly HttpClient _httpClient;
     private readonly ILogger<ValhallaClient> _logger;
 
@@ -17,17 +19,18 @@ public class ValhallaClient : IValhallaClient
         _logger = logger;
     }
 
-    public async Task<double[,]> GetTimeMatrixAsync(
+    public async Task<ValhallaMatrix> GetMatrixAsync(
         IReadOnlyList<Location> locations,
         string costing = "auto",
         CancellationToken cancellationToken = default)
     {
         int n = locations.Count;
-        var matrix = new double[n, n];
+        var time = new double[n, n];
+        var distance = new double[n, n];
 
         if (n <= 1)
         {
-            return matrix;
+            return new ValhallaMatrix(time, distance);
         }
 
         try
@@ -56,15 +59,20 @@ public class ValhallaClient : IValhallaClient
                         for (int j = 0; j < n && j < row.Count; j++)
                         {
                             var element = row[j]?.AsObject();
-                            if (element != null && element.TryGetPropertyValue("time", out var timeNode) && timeNode != null)
-                            {
-                                matrix[i, j] = timeNode.GetValue<double>();
-                            }
+                            if (element == null) continue;
+
+                            time[i, j] = element.TryGetPropertyValue("time", out var timeNode) && timeNode != null
+                                ? timeNode.GetValue<double>()
+                                : UnreachableSeconds;
+
+                            distance[i, j] = element.TryGetPropertyValue("distance", out var distNode) && distNode != null
+                                ? distNode.GetValue<double>()
+                                : 0;
                         }
                     }
 
-                    _logger.LogInformation("Successfully fetched {N}x{N} time matrix from Valhalla ({Costing})", n, n, costing);
-                    return matrix;
+                    _logger.LogInformation("Successfully fetched {N}x{N} matrix from Valhalla ({Costing})", n, n, costing);
+                    return new ValhallaMatrix(time, distance);
                 }
             }
 
@@ -75,7 +83,7 @@ public class ValhallaClient : IValhallaClient
             _logger.LogWarning(ex, "Error querying Valhalla, falling back to Haversine distance matrix");
         }
 
-        // Fallback: Haversine distance with realistic city speeds
+        // Fallback: Haversine distance with realistic city speeds/tortuosity by costing
         double speedKmH = costing == "pedestrian" ? 5.0 : 30.0;
         double tortuosity = costing == "pedestrian" ? 1.2 : 1.35;
 
@@ -85,17 +93,16 @@ public class ValhallaClient : IValhallaClient
             {
                 if (i == j)
                 {
-                    matrix[i, j] = 0;
                     continue;
                 }
 
                 double distKm = CalculateHaversineKm(locations[i], locations[j]) * tortuosity;
-                double travelHours = distKm / speedKmH;
-                matrix[i, j] = travelHours * 3600.0; // в секундах
+                distance[i, j] = distKm * 1000.0;
+                time[i, j] = distKm / speedKmH * 3600.0; // в секундах
             }
         }
 
-        return matrix;
+        return new ValhallaMatrix(time, distance);
     }
 
     public async Task<string?> GetRouteGeoJsonAsync(
