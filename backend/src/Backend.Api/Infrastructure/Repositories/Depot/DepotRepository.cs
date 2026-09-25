@@ -22,7 +22,7 @@ public class DepotRepository(AppDbContext db) : IDepotRepository
         string fallbackDistrict,
         CancellationToken ct = default)
     {
-        var hasCoords = Math.Abs(lat) > 0.0001 || Math.Abs(lon) > 0.0001;
+        var hasCoords = !double.IsNaN(lat) && !double.IsNaN(lon) && (Math.Abs(lat) > 0.0001 || Math.Abs(lon) > 0.0001);
         var hasAddress = !string.IsNullOrWhiteSpace(address);
         
         var depot = await db.Depots.FirstOrDefaultAsync(d =>

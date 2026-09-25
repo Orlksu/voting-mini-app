@@ -26,6 +26,11 @@ public class GeocoderService(HttpClient httpClient, IGeocodeCacheRepository cach
             return cached.IsNotFound ? null : cached;
         }
 
+        return await GeocodeInternalAsync(address, district, rawQuery, cancellationToken);
+    }
+
+    private async Task<GeocoderResultDto?> GeocodeInternalAsync(string address, string? district, string rawQuery, CancellationToken cancellationToken)
+    {
         var searchQueries = BuildSearchQueries(address, district);
         
         bool allQueriesAttemptedCleanly = true;
@@ -82,7 +87,7 @@ public class GeocoderService(HttpClient httpClient, IGeocodeCacheRepository cach
                 continue;
             }
 
-            var geo = await GeocodeAsync(address, district, ct);
+            var geo = await GeocodeInternalAsync(address, district, key, ct);
             result[key] = geo;
         }
 

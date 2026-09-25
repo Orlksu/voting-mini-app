@@ -182,25 +182,6 @@ public class WorkOrderService(
                 .Select(o => o.District)
                 .FirstOrDefault(d => !string.IsNullOrWhiteSpace(d)) ?? "Центральный район";
 
-            DepotDto finalDepot;
-            if (parseData.RawDepot != null && !string.IsNullOrWhiteSpace(parseData.RawDepot.Address))
-            {
-                var geoOffice = await geocoder.GeocodeAsync(parseData.RawDepot.Address, fallbackDistrict, ct);
-                if (geoOffice != null)
-                {
-                    finalDepot = new DepotDto(fallbackDistrict, parseData.RawDepot.Address, geoOffice.Latitude, geoOffice.Longitude);
-                }
-                else
-                {
-                    warnings.Add($"Не удалось точно определить координаты депо '{parseData.RawDepot.Address}' для файла {file.FileName}, использованы координаты центра Москвы.");
-                    finalDepot = new DepotDto(fallbackDistrict, parseData.RawDepot.Address, 55.7558, 37.6173);
-                }
-            }
-            else
-            {
-                finalDepot = new DepotDto(fallbackDistrict, "Главное депо", 55.7558, 37.6173);
-            }
-
             // Пакетное предвычисление координат для всех адресов файла без координат
             var ordersNeedingGeo = parseData.Orders
                 .Where(o => (o.Latitude == null || o.Longitude == null) && !string.IsNullOrWhiteSpace(o.Address))
@@ -232,6 +213,39 @@ public class WorkOrderService(
                 }
 
                 totalUnresolvedCount++;
+            }
+
+            // Определение депо кластера: точный адрес офиса -> центроид заявок файла -> центр Москвы
+            DepotDto finalDepot;
+            if (parseData.RawDepot != null && !string.IsNullOrWhiteSpace(parseData.RawDepot.Address))
+            {
+                var geoOffice = await geocoder.GeocodeAsync(parseData.RawDepot.Address, fallbackDistrict, ct);
+                if (geoOffice != null)
+                {
+                    finalDepot = new DepotDto(fallbackDistrict, parseData.RawDepot.Address, geoOffice.Latitude, geoOffice.Longitude);
+                }
+                else if (validOrders.Count > 0)
+                {
+                    var avgLat = Math.Round(validOrders.Average(o => o.Latitude!.Value), 6);
+                    var avgLon = Math.Round(validOrders.Average(o => o.Longitude!.Value), 6);
+                    warnings.Add($"Не удалось точно определить координаты депо '{parseData.RawDepot.Address}' для файла {file.FileName}, вычислен центроид координат заявок ({avgLat:F4}, {avgLon:F4}).");
+                    finalDepot = new DepotDto(fallbackDistrict, parseData.RawDepot.Address, avgLat, avgLon);
+                }
+                else
+                {
+                    warnings.Add($"Не удалось точно определить координаты депо '{parseData.RawDepot.Address}' для файла {file.FileName}, использованы координаты центра Москвы.");
+                    finalDepot = new DepotDto(fallbackDistrict, parseData.RawDepot.Address, 55.7558, 37.6173);
+                }
+            }
+            else if (validOrders.Count > 0)
+            {
+                var avgLat = Math.Round(validOrders.Average(o => o.Latitude!.Value), 6);
+                var avgLon = Math.Round(validOrders.Average(o => o.Longitude!.Value), 6);
+                finalDepot = new DepotDto(fallbackDistrict, "Главное депо", avgLat, avgLon);
+            }
+            else
+            {
+                finalDepot = new DepotDto(fallbackDistrict, "Главное депо", 55.7558, 37.6173);
             }
 
             var imported = await AddFromImportAsync(finalDepot, validOrders, ct);
