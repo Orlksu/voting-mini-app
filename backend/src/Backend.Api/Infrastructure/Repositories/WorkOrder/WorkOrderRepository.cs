@@ -6,6 +6,12 @@ namespace Backend.Api.Infrastructure.Repositories;
 
 public class WorkOrderRepository(AppDbContext db) : IWorkOrderRepository
 {
+    public async Task AddAsync(WorkOrder order, CancellationToken ct = default)
+    {
+        await db.WorkOrders.AddAsync(order, ct);
+        await db.SaveChangesAsync(ct);
+    }
+
     public async Task AddRangeAsync(IEnumerable<WorkOrder> orders, CancellationToken ct = default)
     {
         var list = orders.ToList();
@@ -49,6 +55,31 @@ public class WorkOrderRepository(AppDbContext db) : IWorkOrderRepository
     public async Task<List<WorkOrder>> GetAllAsync(CancellationToken ct = default)
         => await db.WorkOrders.AsNoTracking().ToListAsync(ct);
 
+    public async Task<WorkOrder?> GetByIdAsync(Guid id, CancellationToken ct = default)
+        => await db.WorkOrders.AsNoTracking().FirstOrDefaultAsync(w => w.Id == id, ct);
+
+    public async Task<WorkOrder?> GetByExternalIdAsync(string externalId, CancellationToken ct = default)
+        => await db.WorkOrders.AsNoTracking().FirstOrDefaultAsync(w => w.ExternalId == externalId, ct);
+
+    public async Task<WorkOrder?> GetByExternalIdAndDistrictAsync(string externalId, string district, CancellationToken ct = default)
+        => await db.WorkOrders.AsNoTracking().FirstOrDefaultAsync(w => w.ExternalId == externalId && w.District == district, ct);
+
+    public async Task<WorkOrder?> GetByIdentifierAsync(string identifier, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(identifier))
+            return null;
+
+        var trimmed = identifier.Trim();
+        if (Guid.TryParse(trimmed, out var guid))
+        {
+            var byId = await db.WorkOrders.AsNoTracking().FirstOrDefaultAsync(w => w.Id == guid, ct);
+            if (byId != null)
+                return byId;
+        }
+
+        return await db.WorkOrders.AsNoTracking().FirstOrDefaultAsync(w => w.ExternalId == trimmed, ct);
+    }
+
     public async Task<List<WorkOrder>> GetByExternalIdsAsync(IEnumerable<string> externalIds, CancellationToken ct = default)
     {
         var ids = externalIds.ToList();
@@ -79,5 +110,22 @@ public class WorkOrderRepository(AppDbContext db) : IWorkOrderRepository
         await db.WorkOrders
             .Where(w => ids.Contains(w.Id))
             .ExecuteUpdateAsync(setters => setters.SetProperty(w => w.Status, newStatus), ct);
+    }
+
+    public async Task<bool> DeleteByIdentifierAsync(string identifier, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(identifier))
+            return false;
+
+        var trimmed = identifier.Trim();
+        if (Guid.TryParse(trimmed, out var guid))
+        {
+            var rows = await db.WorkOrders.Where(w => w.Id == guid).ExecuteDeleteAsync(ct);
+            if (rows > 0)
+                return true;
+        }
+
+        var deletedRows = await db.WorkOrders.Where(w => w.ExternalId == trimmed).ExecuteDeleteAsync(ct);
+        return deletedRows > 0;
     }
 }

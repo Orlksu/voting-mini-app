@@ -122,6 +122,149 @@ public class WorkOrderService(
         return orders.Select(ToDto).ToList();
     }
 
+    public async Task<WorkOrderDto?> GetByIdentifierAsync(string identifier, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(identifier))
+            return null;
+
+        var order = await workOrders.GetByIdentifierAsync(identifier, ct);
+        return order is null ? null : ToDto(order);
+    }
+
+    public async Task<bool> DeleteByIdentifierAsync(string identifier, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(identifier))
+            return false;
+
+        return await workOrders.DeleteByIdentifierAsync(identifier, ct);
+    }
+
+    public async Task<WorkOrderDto> CreateAsync(CreateWorkOrderRequest request, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(request.Address))
+            throw new ArgumentException("Адрес заявки (Address) обязателен для заполнения.");
+
+        double lat;
+        double lon;
+
+        if (request.Latitude.HasValue && request.Longitude.HasValue)
+        {
+            lat = request.Latitude.Value;
+            lon = request.Longitude.Value;
+        }
+        else
+        {
+            var geo = await geocoder.GeocodeAsync(request.Address.Trim(), request.District?.Trim(), ct);
+            if (geo is null)
+                throw new ArgumentException($"Не удалось определить координаты для адреса '{request.Address}'. Пожалуйста, укажите координаты вручную.");
+
+            lat = geo.Latitude;
+            lon = geo.Longitude;
+        }
+
+        Guid finalDepotId;
+        string finalDistrict;
+
+        // 1. Приоритет: явный выбор диспетчером офиса/депо (request.DepotId)
+        if (request.DepotId.HasValue)
+        {
+            var depot = await depots.GetByIdAsync(request.DepotId.Value, ct);
+            if (depot is null)
+                throw new ArgumentException($"Депо с идентификатором '{request.DepotId.Value}' не найдено.");
+
+            finalDepotId = depot.Id;
+            finalDistrict = !string.IsNullOrWhiteSpace(request.District) ? request.District.Trim() : depot.District;
+        }
+        // 2. Приоритет: явное указание района заявки (request.District)
+        else if (!string.IsNullOrWhiteSpace(request.District))
+        {
+            var district = request.District.Trim();
+            var depot = await depots.GetByDistrictAsync(district, ct) ?? await depots.EnsureExistsAsync(district, ct);
+            finalDepotId = depot.Id;
+            finalDistrict = district;
+        }
+        // 3. Приоритет: автоматический подбор ближайшего депо по формуле Haversine
+        else
+        {
+            var allDepots = await depots.GetAllAsync(ct);
+            var depotsWithCoords = allDepots
+                .Where(d => d.Location != null && (Math.Abs(d.Location.Coordinates.Latitude) > 0.0001 || Math.Abs(d.Location.Coordinates.Longitude) > 0.0001))
+                .ToList();
+
+            if (depotsWithCoords.Count > 0)
+            {
+                var nearest = depotsWithCoords.MinBy(d => CalculateHaversineDistanceKm(lat, lon, d.Location!.Coordinates.Latitude, d.Location!.Coordinates.Longitude))!;
+                finalDepotId = nearest.Id;
+                finalDistrict = nearest.District;
+            }
+            else if (allDepots.Count > 0)
+            {
+                finalDepotId = allDepots[0].Id;
+                finalDistrict = allDepots[0].District;
+            }
+            else
+            {
+                var fallbackDepot = await depots.EnsureExistsAsync("Центральный район", ct);
+                finalDepotId = fallbackDepot.Id;
+                finalDistrict = fallbackDepot.District;
+            }
+        }
+
+        var durationMinutes = request.DurationMinutes > 0 ? request.DurationMinutes : 30;
+        var windowStart = request.WindowStart ?? DateTimeOffset.UtcNow;
+        var windowEnd = request.WindowEnd ?? windowStart.AddMinutes(durationMinutes);
+
+        if (windowEnd < windowStart)
+            throw new ArgumentException("Время окончания предпочтительного окна (WindowEnd) не может быть раньше времени начала (WindowStart).");
+
+        var externalId = !string.IsNullOrWhiteSpace(request.ExternalId)
+            ? request.ExternalId.Trim()
+            : $"WO-{Guid.NewGuid().ToString("N")[..8].ToUpperInvariant()}";
+
+        var existing = await workOrders.GetByExternalIdAndDistrictAsync(externalId, finalDistrict, ct);
+        if (existing != null)
+            throw new InvalidOperationException($"Заявка с внешним номером '{externalId}' в районе '{finalDistrict}' уже существует.");
+
+        var entity = new WorkOrder
+        {
+            ExternalId = externalId,
+            District = finalDistrict,
+            DepotId = finalDepotId,
+            Location = new Location
+            {
+                RawAddress = request.Address.Trim(),
+                Coordinates = new GeoCoordinate(lat, lon),
+            },
+            PreferredWindow = new TimeWindow(windowStart.ToUniversalTime(), windowEnd.ToUniversalTime()),
+            ServiceDuration = TimeSpan.FromMinutes(durationMinutes),
+            RequiredSkill = request.RequiredSkill,
+            RequiredTransport = request.RequiredTransport,
+            Priority = request.Priority,
+            Status = OrderStatus.NotDispatched,
+            TaskType = request.TaskType?.Trim() ?? string.Empty,
+        };
+
+        await workOrders.AddAsync(entity, ct);
+        logger.LogInformation("Создана заявка {ExternalId} (ID: {Id}) в районе {District} (Депо ID: {DepotId})",
+            entity.ExternalId, entity.Id, entity.District, entity.DepotId);
+
+        return ToDto(entity);
+    }
+
+    private static double CalculateHaversineDistanceKm(double lat1, double lon1, double lat2, double lon2)
+    {
+        const double R = 6371.0;
+        var dLat = (lat2 - lat1) * Math.PI / 180.0;
+        var dLon = (lon2 - lon1) * Math.PI / 180.0;
+
+        var a = Math.Sin(dLat / 2) * Math.Sin(dLat / 2) +
+                Math.Cos(lat1 * Math.PI / 180.0) * Math.Cos(lat2 * Math.PI / 180.0) *
+                Math.Sin(dLon / 2) * Math.Sin(dLon / 2);
+
+        var c = 2 * Math.Atan2(Math.Sqrt(a), Math.Sqrt(1 - a));
+        return R * c;
+    }
+
     private static WorkOrderDto ToDto(WorkOrder o) => new(
         o.Id,
         o.ExternalId,

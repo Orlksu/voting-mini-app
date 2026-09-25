@@ -6,6 +6,9 @@ namespace Backend.Api.Infrastructure.Repositories;
 
 public class DepotRepository(AppDbContext db) : IDepotRepository
 {
+    public async Task<List<Depot>> GetAllAsync(CancellationToken ct = default)
+        => await db.Depots.AsNoTracking().ToListAsync(ct);
+
     public async Task<Depot?> GetByIdAsync(Guid id, CancellationToken ct = default)
         => await db.Depots.AsNoTracking().FirstOrDefaultAsync(d => d.Id == id, ct);
 
