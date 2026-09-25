@@ -49,6 +49,7 @@ workflows:
                   --no-restore
 
       - name: staging-deploy
+        needs: [frontend-checks, backend-checks]
         cubes:
           - name: deploy-over-ssh
             image: alpine:3.20
