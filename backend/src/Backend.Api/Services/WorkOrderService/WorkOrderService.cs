@@ -144,13 +144,28 @@ public class WorkOrderService(
         if (string.IsNullOrWhiteSpace(request.Address))
             throw new ArgumentException("Адрес заявки (Address) обязателен для заполнения.");
 
+        if (request.DurationMinutes <= 0)
+            throw new ArgumentException("Длительность выполнения заявки (DurationMinutes) должна быть положительным числом больше 0 минут.");
+
         double lat;
         double lon;
+
+        if (request.Latitude.HasValue != request.Longitude.HasValue)
+            throw new ArgumentException("Широта (Latitude) и долгота (Longitude) должны быть переданы парой либо опущены для автогеокодирования.");
 
         if (request.Latitude.HasValue && request.Longitude.HasValue)
         {
             lat = request.Latitude.Value;
             lon = request.Longitude.Value;
+
+            if (double.IsNaN(lat) || double.IsInfinity(lat) || lat is < -90.0 or > 90.0)
+                throw new ArgumentException($"Недопустимое значение широты (Latitude): {lat}. Допустимый диапазон: от -90 до 90.");
+
+            if (double.IsNaN(lon) || double.IsInfinity(lon) || lon is < -180.0 or > 180.0)
+                throw new ArgumentException($"Недопустимое значение долготы (Longitude): {lon}. Допустимый диапазон: от -180 до 180.");
+
+            if (Math.Abs(lat) < 0.0001 && Math.Abs(lon) < 0.0001)
+                throw new ArgumentException("Координаты (0, 0) недопустимы. Укажите реальные географические координаты.");
         }
         else
         {
@@ -160,6 +175,9 @@ public class WorkOrderService(
 
             lat = geo.Latitude;
             lon = geo.Longitude;
+
+            if (lat is < -90.0 or > 90.0 || lon is < -180.0 or > 180.0 || (Math.Abs(lat) < 0.0001 && Math.Abs(lon) < 0.0001))
+                throw new ArgumentException($"Геокодер вернул некорректные координаты ({lat}, {lon}) для адреса '{request.Address}'.");
         }
 
         Guid finalDepotId;
@@ -172,14 +190,27 @@ public class WorkOrderService(
             if (depot is null)
                 throw new ArgumentException($"Депо с идентификатором '{request.DepotId.Value}' не найдено.");
 
+            if (!string.IsNullOrWhiteSpace(request.District) &&
+                !string.Equals(request.District.Trim(), depot.District.Trim(), StringComparison.OrdinalIgnoreCase))
+            {
+                throw new ArgumentException(
+                    $"Указанный район '{request.District.Trim()}' не соответствует району выбранного депо '{depot.District}'. " +
+                    $"Для привязки к депо '{depot.District}' оставьте поле района пустым либо укажите район депо.");
+            }
+
             finalDepotId = depot.Id;
-            finalDistrict = !string.IsNullOrWhiteSpace(request.District) ? request.District.Trim() : depot.District;
+            finalDistrict = depot.District;
         }
         // 2. Приоритет: явное указание района заявки (request.District)
         else if (!string.IsNullOrWhiteSpace(request.District))
         {
             var district = request.District.Trim();
-            var depot = await depots.GetByDistrictAsync(district, ct) ?? await depots.EnsureExistsAsync(district, ct);
+            var depot = await depots.GetByDistrictAsync(district, ct);
+            if (depot is null)
+            {
+                depot = await depots.GetOrCreateByLocationAsync(request.Address.Trim(), lat, lon, district, ct);
+            }
+
             finalDepotId = depot.Id;
             finalDistrict = district;
         }
@@ -204,13 +235,13 @@ public class WorkOrderService(
             }
             else
             {
-                var fallbackDepot = await depots.EnsureExistsAsync("Центральный район", ct);
+                var fallbackDepot = await depots.GetOrCreateByLocationAsync(request.Address.Trim(), lat, lon, "Центральный район", ct);
                 finalDepotId = fallbackDepot.Id;
                 finalDistrict = fallbackDepot.District;
             }
         }
 
-        var durationMinutes = request.DurationMinutes > 0 ? request.DurationMinutes : 30;
+        var durationMinutes = request.DurationMinutes;
         var windowStart = request.WindowStart ?? DateTimeOffset.UtcNow;
         var windowEnd = request.WindowEnd ?? windowStart.AddMinutes(durationMinutes);
 

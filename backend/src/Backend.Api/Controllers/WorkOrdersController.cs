@@ -4,6 +4,7 @@ using Backend.Api.Services.WorkOrderService;
 using Backend.Contracts.Requests;
 using Backend.Contracts.Responses;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace Backend.Api.Controllers;
 
@@ -27,9 +28,11 @@ public class WorkOrdersController(
     /// <param name="ct">Токен отмены запроса.</param>
     /// <response code="201">Заявка успешно создана.</response>
     /// <response code="400">Ошибка валидации входных данных или невозможность определить координаты.</response>
+    /// <response code="409">Конфликт: заявка с таким идентификатором в указанном районе уже существует.</response>
     [HttpPost]
     [ProducesResponseType<WorkOrderDto>(StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
     public async Task<IActionResult> Create([FromBody] CreateWorkOrderRequest request, CancellationToken ct)
     {
         try
@@ -43,7 +46,13 @@ public class WorkOrdersController(
         }
         catch (InvalidOperationException ex)
         {
-            return BadRequest(ex.Message);
+            return Conflict(ex.Message);
+        }
+        catch (DbUpdateException ex)
+        {
+            logger.LogWarning(ex, "Конфликт уникальности при сохранении заявки {ExternalId} в районе {District}",
+                request.ExternalId, request.District);
+            return Conflict("Заявка с таким идентификатором в указанном районе уже существует.");
         }
     }
 
@@ -65,18 +74,28 @@ public class WorkOrdersController(
 
     /// <summary>
     /// Удаление заявки по Id (Guid) или внешнему номеру (ExternalId).
+    /// Разрешено удалять только нераспределенные заявки (NotDispatched).
     /// </summary>
     /// <param name="identifier">Внутренний Guid заявки или строковый ExternalId.</param>
     /// <param name="ct">Токен отмены запроса.</param>
     /// <response code="204">Заявка успешно удалена.</response>
+    /// <response code="400">Нельзя удалить распределенную заявку или найдено несколько заявок с таким ExternalId.</response>
     /// <response code="404">Заявка не найдена.</response>
     [HttpDelete("{identifier}")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> Delete(string identifier, CancellationToken ct)
     {
-        var deleted = await workOrderService.DeleteByIdentifierAsync(identifier, ct);
-        return deleted ? NoContent() : NotFound("Заявка не найдена.");
+        try
+        {
+            var deleted = await workOrderService.DeleteByIdentifierAsync(identifier, ct);
+            return deleted ? NoContent() : NotFound("Заявка не найдена.");
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ex.Message);
+        }
     }
 
     /// <summary>

@@ -118,14 +118,42 @@ public class WorkOrderRepository(AppDbContext db) : IWorkOrderRepository
             return false;
 
         var trimmed = identifier.Trim();
+        WorkOrder? targetOrder = null;
+
         if (Guid.TryParse(trimmed, out var guid))
         {
-            var rows = await db.WorkOrders.Where(w => w.Id == guid).ExecuteDeleteAsync(ct);
-            if (rows > 0)
-                return true;
+            targetOrder = await db.WorkOrders.FirstOrDefaultAsync(w => w.Id == guid, ct);
         }
 
-        var deletedRows = await db.WorkOrders.Where(w => w.ExternalId == trimmed).ExecuteDeleteAsync(ct);
-        return deletedRows > 0;
+        if (targetOrder is null)
+        {
+            var matching = await db.WorkOrders.Where(w => w.ExternalId == trimmed).ToListAsync(ct);
+            if (matching.Count > 1)
+            {
+                var districts = string.Join(", ", matching.Select(o => $"'{o.District}'"));
+                throw new InvalidOperationException(
+                    $"Найдено несколько заявок ({matching.Count}) с номером '{trimmed}' в разных районах ({districts}). " +
+                    $"Для безопасного удаления укажите точный уникальный Id (Guid) заявки.");
+            }
+
+            if (matching.Count == 1)
+            {
+                targetOrder = matching[0];
+            }
+        }
+
+        if (targetOrder is null)
+            return false;
+
+        if (targetOrder.Status is OrderStatus.Dispatched or OrderStatus.InProgress or OrderStatus.Completed)
+        {
+            throw new InvalidOperationException(
+                $"Нельзя удалить заявку '{targetOrder.ExternalId}' со статусом '{targetOrder.Status}'. " +
+                $"Удаление разрешено только для нераспределенных (NotDispatched) или отмененных заявок.");
+        }
+
+        db.WorkOrders.Remove(targetOrder);
+        await db.SaveChangesAsync(ct);
+        return true;
     }
 }
