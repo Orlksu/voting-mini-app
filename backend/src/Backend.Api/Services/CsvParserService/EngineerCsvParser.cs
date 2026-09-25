@@ -1,4 +1,4 @@
-using System.Globalization;
+using Backend.Api.Services.CsvParserService.CsvConfiguration;
 using Backend.Contracts.Requests;
 using CsvHelper;
 
@@ -8,20 +8,11 @@ public class EngineerCsvParser : IEngineerCsvParser
 {
     public async Task<List<EngineerCsvRowDto>> ParseEngineersAsync(Stream stream, CancellationToken ct = default)
     {
-        using var reader = new StreamReader(stream, System.Text.Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
-        var text = await reader.ReadToEndAsync(ct);
+        var (workStream, delimiter) = await CsvStreamHelper.PrepareStreamAndDetectDelimiterAsync(stream, ct);
+        var config = CsvStreamHelper.CreateConfiguration(delimiter);
 
-        var config = new CsvHelper.Configuration.CsvConfiguration(CultureInfo.InvariantCulture)
-        {
-            Delimiter = DetectDelimiter(text).ToString(),
-            PrepareHeaderForMatch = args => args.Header.Trim().ToLowerInvariant(),
-            MissingFieldFound = null,
-            HeaderValidated = null,
-            TrimOptions = CsvHelper.Configuration.TrimOptions.Trim,
-            ShouldSkipRecord = args => args.Row.Parser.Record?.All(string.IsNullOrWhiteSpace) ?? false,
-        };
-
-        using var csv = new CsvReader(new StringReader(text), config);
+        using var reader = new StreamReader(workStream, System.Text.Encoding.UTF8, detectEncodingFromByteOrderMarks: true, leaveOpen: true);
+        using var csv = new CsvReader(reader, config);
         csv.Context.RegisterClassMap<CsvConfiguration.EngineerCsvMap>();
 
         var result = new List<EngineerCsvRowDto>();
@@ -34,19 +25,5 @@ public class EngineerCsvParser : IEngineerCsvParser
         }
 
         return result;
-    }
-
-    private static char DetectDelimiter(string text)
-    {
-        var headerLine = text
-            .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
-            .FirstOrDefault();
-
-        if (string.IsNullOrWhiteSpace(headerLine))
-            return ';';
-
-        int commas = headerLine.Count(c => c == ',');
-        int semicolons = headerLine.Count(c => c == ';');
-        return commas > semicolons ? ',' : ';';
     }
 }

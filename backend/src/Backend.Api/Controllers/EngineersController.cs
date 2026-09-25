@@ -16,12 +16,17 @@ public class EngineersController(IEngineerCsvParser csvParser, IEngineerService 
 
     [HttpPost("upload-csv")]
     [Consumes("multipart/form-data")]
-    [ProducesResponseType(StatusCodes.Status200OK)]
+    [RequestSizeLimit(10 * 1024 * 1024)]
+    [ProducesResponseType<EngineerImportResultDto>(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> UploadEngineersCsv([FromForm] IFormFile? file, CancellationToken ct)
     {
         if (file is null || file.Length == 0)
             return BadRequest("Файл не получен. Отправьте multipart/form-data с полем 'file', содержащим CSV-файл.");
+
+        var ext = Path.GetExtension(file.FileName);
+        if (!string.Equals(ext, ".csv", StringComparison.OrdinalIgnoreCase))
+            return BadRequest("Неверный формат файла. Поддерживаются только файлы .csv");
 
         await using var stream = file.OpenReadStream();
         var rows = await csvParser.ParseEngineersAsync(stream, ct);

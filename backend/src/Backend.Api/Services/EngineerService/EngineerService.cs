@@ -64,12 +64,40 @@ public class EngineerService(IDepotRepository depots, IEngineerRepository engine
         return entity;
     }
 
-    public async Task<List<Engineer>> AddRangeAsync(string district, IEnumerable<EngineerInputDto> engineers, CancellationToken ct = default)
+    public async Task<List<Engineer>> AddRangeAsync(string district, IEnumerable<EngineerInputDto> engineersList, CancellationToken ct = default)
     {
-        var result = new List<Engineer>();
-        foreach (var engineer in engineers)
-            result.Add(await AddAsync(district, engineer, ct));
-        return result;
+        var dtoList = engineersList.ToList();
+        if (dtoList.Count == 0)
+            return [];
+
+        var firstWithCoords = dtoList.FirstOrDefault(e => e.StartLatitude.HasValue && e.StartLongitude.HasValue) ?? dtoList[0];
+        var depot = await depots.GetOrCreateAsync(
+            district,
+            firstWithCoords.StartAddress,
+            firstWithCoords.StartLatitude ?? 0.0,
+            firstWithCoords.StartLongitude ?? 0.0,
+            ct);
+
+        var entities = dtoList.Select(e => new Engineer
+        {
+            ExternalId = e.ExternalId,
+            Name = e.Name,
+            District = district,
+            DepotId = depot.Id,
+            StartLocation = depot.Location ?? new Location
+            {
+                RawAddress = e.StartAddress,
+                Coordinates = new GeoCoordinate(e.StartLatitude ?? 0.0, e.StartLongitude ?? 0.0),
+            },
+            Shift = new TimeWindow(e.ShiftStart.ToUniversalTime(), e.ShiftEnd.ToUniversalTime()),
+            Transport = e.Transport,
+            Skills = [.. e.Skills],
+            IsAvailable = true,
+            MaxOrdersPerShift = e.MaxOrdersPerShift,
+        }).ToList();
+
+        await engineers.UpsertRangeAsync(entities, ct);
+        return entities;
     }
 
     public async Task<EngineerImportResultDto> ImportEngineersAsync(List<EngineerCsvRowDto> rawEngineers, CancellationToken ct = default)
@@ -80,7 +108,6 @@ public class EngineerService(IDepotRepository depots, IEngineerRepository engine
         var unresolved = 0;
         var depotsCreated = 0;
 
-        var todayUtc = DateTimeOffset.UtcNow;
         var seenExternalIds = new HashSet<string>();
         var districtDepots = new Dictionary<string, Depot>();
         var entities = new List<Engineer>();
@@ -122,8 +149,8 @@ public class EngineerService(IDepotRepository depots, IEngineerRepository engine
                 continue;
             }
 
-            var shiftStart = ParseShift(raw.ShiftStart, todayUtc);
-            var shiftEnd = ParseShift(raw.ShiftEnd, todayUtc);
+            var shiftStart = ParseShift(raw.ShiftStart);
+            var shiftEnd = ParseShift(raw.ShiftEnd);
             if (shiftStart is null || shiftEnd is null)
             {
                 warnings.Add($"Невалидный формат времени смены у инженера '{externalId}' — пропущено.");
@@ -132,7 +159,7 @@ public class EngineerService(IDepotRepository depots, IEngineerRepository engine
             }
 
             if (shiftEnd.Value <= shiftStart.Value)
-                shiftEnd = shiftStart.Value.AddDays(1);
+                shiftEnd = shiftEnd.Value.AddDays(1);
 
             var transport = ParseTransport(raw.Transport);
             if (transport is null)
@@ -210,29 +237,8 @@ public class EngineerService(IDepotRepository depots, IEngineerRepository engine
             };
     }
 
-    private static DateTimeOffset? ParseShift(string value, DateTimeOffset todayUtc)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-            return null;
-
-        var text = value.Trim();
-
-        if (TimeSpan.TryParse(text, CultureInfo.InvariantCulture, out var time))
-        {
-            var utcMidnight = new DateTime(
-                todayUtc.Year, todayUtc.Month, todayUtc.Day,
-                0, 0, 0, DateTimeKind.Utc);
-            return new DateTimeOffset(utcMidnight + time, TimeSpan.Zero);
-        }
-
-        if (DateTimeOffset.TryParse(text, CultureInfo.GetCultureInfo("ru-RU"), DateTimeStyles.None, out var dto))
-            return dto.ToUniversalTime();
-
-        if (DateTime.TryParse(text, CultureInfo.GetCultureInfo("ru-RU"), DateTimeStyles.None, out var dt))
-            return new DateTimeOffset(dt, TimeSpan.Zero);
-
-        return null;
-    }
+    private static DateTimeOffset? ParseShift(string value) =>
+        Backend.Api.Services.Common.DateTimeParserHelper.ParseMskDateTimeToUtc(value);
 
     private static TransportType? ParseTransport(string value)
     {

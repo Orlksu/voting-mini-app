@@ -15,7 +15,9 @@ public class WorkOrderRepository(AppDbContext db) : IWorkOrderRepository
         var existing = await db.WorkOrders
             .Where(w => list.Select(o => o.ExternalId).Contains(w.ExternalId))
             .ToListAsync(ct);
-        var existingByKey = existing.ToDictionary(w => (w.ExternalId, w.District));
+        var existingByKey = existing
+            .GroupBy(w => (w.ExternalId, w.District))
+            .ToDictionary(g => g.Key, g => g.First());
 
         var processed = new HashSet<(string, string)>();
         foreach (var order in list)

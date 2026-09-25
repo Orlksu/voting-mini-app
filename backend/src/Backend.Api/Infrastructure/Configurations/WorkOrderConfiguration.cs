@@ -12,10 +12,13 @@ public class WorkOrderConfiguration : IEntityTypeConfiguration<WorkOrder>
 
         builder.Property(x => x.District)
             .HasMaxLength(100)
-            .IsRequired(false);
+            .IsRequired();
         builder.Property(x => x.Priority).HasConversion<string>();
         builder.Property(x => x.Status).HasConversion<string>();
         builder.HasIndex(x => new { x.ExternalId, x.District }).IsUnique();
+        builder.HasIndex(x => x.Status);
+        builder.HasIndex(x => new { x.Status, x.District });
+        builder.HasIndex(x => new { x.Status, x.DepotId });
         builder.ComplexProperty(x => x.Location, loc =>
         {
             loc.Property(l => l.RawAddress).HasMaxLength(500);

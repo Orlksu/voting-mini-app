@@ -23,11 +23,12 @@ public class EngineerRouteConfiguration : IEntityTypeConfiguration<EngineerRoute
         builder.Property(x => x.BaselineDistanceKm);
         builder.Property(x => x.EncodedPolyline).HasColumnType("text");
 
+        builder.HasIndex(x => x.EngineerId);
+        builder.HasIndex(x => x.OperationResultId);
+
         builder.HasMany(x => x.Stops)
             .WithOne()
             .HasForeignKey(x => x.EngineerRouteId)
             .OnDelete(DeleteBehavior.Cascade);
-        
-        
     }
 }

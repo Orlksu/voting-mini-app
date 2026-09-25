@@ -14,4 +14,6 @@ public class GeocoderResultDto
     public string DisplayName { get; set; } = string.Empty;
     public double Latitude => double.TryParse(LatString, System.Globalization.CultureInfo.InvariantCulture, out var val) ? val : 0;
     public double Longitude => double.TryParse(LonString, System.Globalization.CultureInfo.InvariantCulture, out var val) ? val : 0;
+
+    public bool IsNotFound => Math.Abs(Latitude - (-999)) < 0.001 && Math.Abs(Longitude - (-999)) < 0.001;
 }

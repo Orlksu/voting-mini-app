@@ -77,7 +77,6 @@ public class MockRouteOptimizer : IRouteOptimizer
 
             foreach (var order in assignedOrders)
             {
-              \
                 double legDistance = 3.5;
                 int travelMinutes = 15;
 
