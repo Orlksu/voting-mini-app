@@ -171,44 +171,81 @@ public class WorkOrderService(
 
     public async Task<OrderImportResultDto> ImportOrdersCsvAsync(List<IFormFile> files, CancellationToken ct = default)
     {
+        var payloads = new List<(string FileName, byte[] Content)>();
+        foreach (var file in files)
+        {
+            if (file.Length == 0) continue;
+            using var ms = new MemoryStream();
+            await file.CopyToAsync(ms, ct);
+            payloads.Add((file.FileName, ms.ToArray()));
+        }
+
+        return await ImportOrdersFromPayloadsAsync(payloads, null, ct);
+    }
+
+    public async Task<OrderImportResultDto> ImportOrdersFromPayloadsAsync(
+        List<(string FileName, byte[] Content)> files,
+        IProgress<(int Processed, int Total, string Stage)>? progress = null,
+        CancellationToken ct = default)
+    {
         var totalUnresolvedCount = 0;
         var processedFilesCount = 0;
         var totalImportedCount = 0;
         var warnings = new List<string>();
 
-        foreach (var file in files)
+        progress?.Report((0, 0, "Чтение и парсинг CSV файлов..."));
+
+        var parsedFiles = new List<(string FileName, ParseImportDto ParseData)>();
+        foreach (var (fileName, content) in files)
         {
-            if (file.Length == 0)
+            if (content.Length == 0)
                 continue;
 
-            var ext = Path.GetExtension(file.FileName);
+            var ext = Path.GetExtension(fileName);
             if (!string.Equals(ext, ".csv", StringComparison.OrdinalIgnoreCase))
             {
-                warnings.Add($"Файл '{file.FileName}' пропущен: поддерживается только формат .csv");
+                warnings.Add($"Файл '{fileName}' пропущен: поддерживается только формат .csv");
                 continue;
             }
 
-            await using var stream = file.OpenReadStream();
+            using var stream = new MemoryStream(content);
             var parseData = await csvParserService.ParseOrderAsync(stream, ct);
 
             if (parseData.Orders.Count == 0)
             {
-                warnings.Add($"Файл '{file.FileName}' не содержит строк с заявками.");
+                warnings.Add($"Файл '{fileName}' не содержит строк с заявками.");
                 continue;
             }
+
+            parsedFiles.Add((fileName, parseData));
+        }
+
+        if (parsedFiles.Count == 0)
+        {
+            return new OrderImportResultDto(0, 0, 0, warnings);
+        }
+
+        // Общее число всех уникальных адресов для геокодинга по всем файлам
+        var ordersNeedingGeo = parsedFiles
+            .SelectMany(f => f.ParseData.Orders)
+            .Where(o => (o.Latitude == null || o.Longitude == null) && !string.IsNullOrWhiteSpace(o.Address))
+            .Select(o => (Address: o.Address, District: o.District))
+            .Distinct()
+            .ToList();
+
+        progress?.Report((0, ordersNeedingGeo.Count, $"Геокодирование адресов (0 из {ordersNeedingGeo.Count})..."));
+
+        var geocodedMap = await geocoder.GeocodeBatchAsync(ordersNeedingGeo, progress, ct);
+
+        for (int i = 0; i < parsedFiles.Count; i++)
+        {
+            var (fileName, parseData) = parsedFiles[i];
+
+            progress?.Report((ordersNeedingGeo.Count, ordersNeedingGeo.Count, $"Сохранение заявок файла {i + 1} из {parsedFiles.Count} ({fileName})..."));
 
             var fallbackDistrict = parseData.Orders
                 .Select(o => o.District)
                 .FirstOrDefault(d => !string.IsNullOrWhiteSpace(d)) ?? "Центральный район";
-
-            // Пакетное предвычисление координат для всех адресов файла без координат
-            var ordersNeedingGeo = parseData.Orders
-                .Where(o => (o.Latitude == null || o.Longitude == null) && !string.IsNullOrWhiteSpace(o.Address))
-                .Select(o => (Address: o.Address, District: o.District))
-                .Distinct()
-                .ToList();
-
-            var geocodedMap = await geocoder.GeocodeBatchAsync(ordersNeedingGeo, ct);
 
             var validOrders = new List<WorkOrderInputDto>();
             foreach (var order in parseData.Orders)
@@ -247,12 +284,12 @@ public class WorkOrderService(
                 {
                     var avgLat = Math.Round(validOrders.Average(o => o.Latitude!.Value), 6);
                     var avgLon = Math.Round(validOrders.Average(o => o.Longitude!.Value), 6);
-                    warnings.Add($"Не удалось точно определить координаты депо '{parseData.RawDepot.Address}' для файла {file.FileName}, вычислен центроид координат заявок ({avgLat:F4}, {avgLon:F4}).");
+                    warnings.Add($"Не удалось точно определить координаты депо '{parseData.RawDepot.Address}' для файла {fileName}, вычислен центроид координат заявок ({avgLat:F4}, {avgLon:F4}).");
                     finalDepot = new DepotDto(fallbackDistrict, parseData.RawDepot.Address, avgLat, avgLon);
                 }
                 else
                 {
-                    warnings.Add($"Не удалось точно определить координаты депо '{parseData.RawDepot.Address}' для файла {file.FileName}, использованы координаты центра Москвы.");
+                    warnings.Add($"Не удалось точно определить координаты депо '{parseData.RawDepot.Address}' для файла {fileName}, использованы координаты центра Москвы.");
                     finalDepot = new DepotDto(fallbackDistrict, parseData.RawDepot.Address, 55.7558, 37.6173);
                 }
             }
@@ -271,6 +308,8 @@ public class WorkOrderService(
             totalImportedCount += imported;
             processedFilesCount++;
         }
+
+        progress?.Report((ordersNeedingGeo.Count, ordersNeedingGeo.Count, "Импорт успешно завершён."));
 
         return new OrderImportResultDto(processedFilesCount, totalImportedCount, totalUnresolvedCount, warnings);
     }

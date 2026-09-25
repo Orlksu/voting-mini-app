@@ -58,8 +58,14 @@ public class GeocoderService(HttpClient httpClient, IGeocodeCacheRepository cach
         return null;
     }
 
+    public Task<Dictionary<string, GeocoderResultDto?>> GeocodeBatchAsync(
+        IEnumerable<(string Address, string? District)> items, 
+        CancellationToken ct = default)
+        => GeocodeBatchAsync(items, null, ct);
+
     public async Task<Dictionary<string, GeocoderResultDto?>> GeocodeBatchAsync(
         IEnumerable<(string Address, string? District)> items, 
+        IProgress<(int Processed, int Total, string Stage)>? progress,
         CancellationToken ct = default)
     {
         var distinctItems = items
@@ -75,20 +81,30 @@ public class GeocoderService(HttpClient httpClient, IGeocodeCacheRepository cach
         var cachedMap = await cache.GetBatchByQueriesAsync(queryKeys, ct);
         var result = new Dictionary<string, GeocoderResultDto?>(StringComparer.OrdinalIgnoreCase);
 
+        int processed = 0;
+        int total = distinctItems.Count;
+
         foreach (var (address, district) in distinctItems)
         {
             var key = QueryKey(address, district);
             if (result.ContainsKey(key))
+            {
+                processed++;
                 continue;
+            }
 
             if (cachedMap.TryGetValue(key, out var cached) && cached is not null)
             {
                 result[key] = cached.IsNotFound ? null : cached;
+                processed++;
+                progress?.Report((processed, total, $"Геокодирование адресов ({processed} из {total})"));
                 continue;
             }
 
             var geo = await GeocodeInternalAsync(address, district, key, ct);
             result[key] = geo;
+            processed++;
+            progress?.Report((processed, total, $"Геокодирование адресов ({processed} из {total})"));
         }
 
         return result;
