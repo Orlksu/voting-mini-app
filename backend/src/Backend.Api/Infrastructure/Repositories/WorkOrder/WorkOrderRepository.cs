@@ -69,7 +69,7 @@ public class WorkOrderRepository(AppDbContext db) : IWorkOrderRepository
         => await db.WorkOrders.AsNoTracking().FirstOrDefaultAsync(w => w.ExternalId == externalId, ct);
 
     public async Task<WorkOrder?> GetByExternalIdAndDistrictAsync(string externalId, string district, CancellationToken ct = default)
-        => await db.WorkOrders.AsNoTracking().FirstOrDefaultAsync(w => w.ExternalId == externalId && w.District == district, ct);
+        => await db.WorkOrders.AsNoTracking().FirstOrDefaultAsync(w => EF.Functions.ILike(w.ExternalId, externalId.Trim()) && EF.Functions.ILike(w.District, district.Trim()), ct);
 
     public async Task<List<WorkOrder>> FindByIdentifierAsync(string identifier, string? district = null, CancellationToken ct = default)
     {
@@ -84,11 +84,11 @@ public class WorkOrderRepository(AppDbContext db) : IWorkOrderRepository
                 return [byId];
         }
 
-        var query = db.WorkOrders.Where(w => w.ExternalId == trimmed);
+        var query = db.WorkOrders.Where(w => EF.Functions.ILike(w.ExternalId, trimmed));
         if (!string.IsNullOrWhiteSpace(district))
         {
             var trimmedDistrict = district.Trim();
-            query = query.Where(w => w.District == trimmedDistrict);
+            query = query.Where(w => EF.Functions.ILike(w.District, trimmedDistrict));
         }
 
         return await query.ToListAsync(ct);
@@ -132,7 +132,11 @@ public class WorkOrderRepository(AppDbContext db) : IWorkOrderRepository
         return result;
     }
 
-    public async Task<List<WorkOrder>> GetPendingOrdersForPlanningAsync(Guid? depotId = null, string? district = null, CancellationToken ct = default)
+    public async Task<List<WorkOrder>> GetPendingOrdersForPlanningAsync(
+        Guid? depotId = null, 
+        string? district = null, 
+        DateTimeOffset? targetDate = null, 
+        CancellationToken ct = default)
     {
         var query = db.WorkOrders
             .AsNoTracking()
@@ -148,6 +152,15 @@ public class WorkOrderRepository(AppDbContext db) : IWorkOrderRepository
         {
             var trimmed = district.Trim();
             query = query.Where(w => EF.Functions.ILike(w.District, trimmed));
+        }
+
+        if (targetDate.HasValue)
+        {
+            var msk = targetDate.Value.ToOffset(TimeSpan.FromHours(3));
+            var startUtc = new DateTimeOffset(msk.Year, msk.Month, msk.Day, 0, 0, 0, TimeSpan.FromHours(3)).ToUniversalTime();
+            var endUtc = startUtc.AddDays(1);
+
+            query = query.Where(w => w.PreferredWindow.Start >= startUtc && w.PreferredWindow.Start < endUtc);
         }
 
         return await query.ToListAsync(ct);

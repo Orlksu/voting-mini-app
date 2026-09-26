@@ -228,7 +228,9 @@ public class MockRouteOptimizer : IRouteOptimizer
                     DistanceFromPrevKm: c.DistanceKm,
                     TaskType: order.TaskType,
                     Priority: order.Priority,
-                    AssignmentReason: reason));
+                    AssignmentReason: reason,
+                    Status: OrderStatus.Dispatched,
+                    OrderId: order.InternalId));
 
                 state.CurrentLat = orderLat;
                 state.CurrentLon = orderLon;

@@ -20,7 +20,7 @@ public class EngineersController(IEngineerCsvParser csvParser, IEngineerService 
     [RequestSizeLimit(10 * 1024 * 1024)]
     [ProducesResponseType<EngineerImportResultDto>(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    public async Task<IActionResult> UploadEngineersCsv([FromForm] IFormFile? file, CancellationToken ct)
+    public async Task<IActionResult> UploadEngineersCsv([FromForm] IFormFile? file, [FromQuery] bool sync = true, CancellationToken ct = default)
     {
         if (file is null || file.Length == 0)
             return BadRequest("Файл не получен. Отправьте multipart/form-data с полем 'file', содержащим CSV-файл.");

@@ -337,7 +337,8 @@ namespace Backend.Api.Infrastructure.Migrations
 
                     b.HasIndex("ExternalOrderId");
 
-                    b.HasIndex("EngineerRouteId", "Sequence");
+                    b.HasIndex("EngineerRouteId", "Sequence")
+                        .IsUnique();
 
                     b.ToTable("RouteStops");
                 });

@@ -17,7 +17,7 @@ public class RouteStopConfiguration : IEntityTypeConfiguration<RouteStop>
         
         builder.HasIndex(x => x.ExternalOrderId);
         
-        builder.HasIndex(x => new { x.EngineerRouteId, x.Sequence });
+        builder.HasIndex(x => new { x.EngineerRouteId, x.Sequence }).IsUnique();
 
         builder.ComplexProperty(x => x.Location, loc =>
         {

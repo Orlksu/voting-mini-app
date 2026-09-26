@@ -102,12 +102,17 @@ public class OptimizationController : ControllerBase
     /// берет всех доступных инженеров и все актуальные незавершенные заявки (NotDispatched и Dispatched), исключая Cancelled и Completed.
     /// Опционально фильтрует по идентификатору депо (depotId) или району (district).
     /// </summary>
+    /// <param name="depotId">Опциональный идентификатор депо (DepotId) для ограничения расчета.</param>
+    /// <param name="district">Опциональный район (District) для ограничения расчета.</param>
+    /// <param name="date">Опциональная целевая дата перепланирования (фильтрует заявки строго на эту дату в MSK).</param>
+    /// <param name="ct">Токен отмены запроса.</param>
     [HttpPost("replan")]
     [ProducesResponseType<JobStatusResponseDto>(StatusCodes.Status202Accepted)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<ActionResult<JobStatusResponseDto>> Replan(
         [FromQuery] Guid? depotId = null,
         [FromQuery] string? district = null,
+        [FromQuery] DateTimeOffset? date = null,
         CancellationToken ct = default)
     {
         var engEntities = await _engineers.GetAvailableEngineersAsync(depotId, district, ct);
@@ -115,12 +120,14 @@ public class OptimizationController : ControllerBase
         if (engineers.Count == 0)
             return BadRequest("Нет доступных инженеров для перепланирования.");
 
-        var woEntities = await _workOrders.GetPendingOrdersForPlanningAsync(depotId, district, ct);
+        var woEntities = await _workOrders.GetPendingOrdersForPlanningAsync(depotId, district, date, ct);
         var orders = woEntities.Select(ToWorkOrderInputDto).ToList();
         if (orders.Count == 0)
-            return BadRequest("Нет незавершенных заявок для перепланирования.");
+            return BadRequest(date.HasValue 
+                ? $"Нет незавершенных заявок для перепланирования на дату {date.Value:yyyy-MM-dd}."
+                : "Нет незавершенных заявок для перепланирования.");
 
-        var planDateUtc = orders.Select(o => o.WindowStart).FirstOrDefault(w => w.HasValue) ?? DateTimeOffset.UtcNow;
+        var planDateUtc = date ?? (orders.Select(o => o.WindowStart).FirstOrDefault(w => w.HasValue) ?? DateTimeOffset.UtcNow);
         var mskOffset = TimeSpan.FromHours(3);
         var planDateMsk = planDateUtc.ToOffset(mskOffset);
 
@@ -383,10 +390,14 @@ public class OptimizationController : ControllerBase
         }
 
         // Исключаем недоступного инженера и обновляем live-состояние остальных
-        var statesByEngineer = request.EngineersStates.ToDictionary(s => s.EngineerExternalId);
+        var statesByEngineer = request.EngineersStates
+            .GroupBy(s => s.EngineerExternalId.Trim(), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.Last(), StringComparer.OrdinalIgnoreCase);
+
         var updatedEngineers = engineers
-            .Where(e => e.ExternalId != request.UnavailableEngineerExternalId)
-            .Select(e => statesByEngineer.TryGetValue(e.ExternalId, out var state)
+            .Where(e => string.IsNullOrWhiteSpace(request.UnavailableEngineerExternalId) ||
+                        !string.Equals(e.ExternalId.Trim(), request.UnavailableEngineerExternalId.Trim(), StringComparison.OrdinalIgnoreCase))
+            .Select(e => statesByEngineer.TryGetValue(e.ExternalId.Trim(), out var state)
                 ? e with
                 {
                     StartLatitude = state.CurrentLatitude,
@@ -398,7 +409,8 @@ public class OptimizationController : ControllerBase
 
         // Оставшиеся заявки + новая срочная (если есть)
         var orders = request.RemainingOrders
-            .Where(o => o.ExternalId != request.CancelledOrderExternalId)
+            .Where(o => string.IsNullOrWhiteSpace(request.CancelledOrderExternalId) ||
+                        !string.Equals(o.ExternalId.Trim(), request.CancelledOrderExternalId.Trim(), StringComparison.OrdinalIgnoreCase))
             .ToList();
         if (request.NewUrgentOrder != null)
         {
