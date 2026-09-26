@@ -37,7 +37,10 @@ public class WorkOrder
             throw new InvalidOperationException("Нельзя отменить уже завершенную заявку.");
 
         Status = OrderStatus.Cancelled;
-        CancellationReason = string.IsNullOrWhiteSpace(reason) ? null : reason.Trim();
+        if (!string.IsNullOrWhiteSpace(reason))
+        {
+            CancellationReason = reason.Trim();
+        }
     }
 
     /// <summary>

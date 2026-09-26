@@ -44,9 +44,7 @@ public class WorkOrderService(
         var engineerRoutes = await routes.GetByEngineerAsync(engineer.Id, ct);
         if (engineerRoutes.Count > 0)
         {
-            var route = engineerRoutes
-                .OrderByDescending(r => r.Stops.Count > 0 ? r.Stops.Min(s => s.EstimatedArrival) : DateTimeOffset.MinValue)
-                .First();
+            var route = engineerRoutes.First();
             var polyline = !string.IsNullOrEmpty(route.EncodedPolyline)
                 ? route.EncodedPolyline
                 : (route.Stops.Count > 0
@@ -65,7 +63,10 @@ public class WorkOrderService(
             var matchedOrders = await workOrders.GetByExternalIdsAsync(externalIds, ct);
             var orderMap = matchedOrders
                 .GroupBy(o => o.ExternalId, StringComparer.OrdinalIgnoreCase)
-                .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+                .ToDictionary(
+                    g => g.Key, 
+                    g => g.FirstOrDefault(o => o.DepotId == engineer.DepotId) ?? g.First(), 
+                    StringComparer.OrdinalIgnoreCase);
 
             var stops = route.Stops.OrderBy(s => s.Sequence).Select(s =>
             {
@@ -84,7 +85,7 @@ public class WorkOrderService(
                     wo?.TaskType ?? string.Empty,
                     wo?.Priority ?? OrderPriority.Normal,
                     s.AssignmentReason,
-                    wo?.Status ?? OrderStatus.Dispatched
+                    wo?.Status ?? OrderStatus.Cancelled
                 );
             }).ToList();
 
@@ -121,7 +122,10 @@ public class WorkOrderService(
                 {
                     var orderMap = matchedOrders
                         .GroupBy(o => o.ExternalId, StringComparer.OrdinalIgnoreCase)
-                        .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+                        .ToDictionary(
+                            g => g.Key, 
+                            g => g.FirstOrDefault(o => o.DepotId == engineer.DepotId) ?? g.First(), 
+                            StringComparer.OrdinalIgnoreCase);
 
                     var enrichedStops = memoryRoute.Stops.Select(s =>
                     {
@@ -134,7 +138,7 @@ public class WorkOrderService(
                                 Priority = wo.Priority
                             };
                         }
-                        return s;
+                        return s with { Status = OrderStatus.Cancelled };
                     }).ToList();
 
                     return memoryRoute with { Stops = enrichedStops };
@@ -234,6 +238,7 @@ public class WorkOrderService(
         var order = matches[0];
         order.Cancel(reason);
         await workOrders.UpdateAsync(order, ct);
+        jobStore.UpdateOrderStatus(order.ExternalId, order.Status);
 
         logger.LogInformation("Заявка {ExternalId} (ID: {Id}) успешно отменена. Причина: {Reason}",
             order.ExternalId, order.Id, order.CancellationReason ?? "не указана");
@@ -261,6 +266,7 @@ public class WorkOrderService(
         var order = matches[0];
         order.Complete();
         await workOrders.UpdateAsync(order, ct);
+        jobStore.UpdateOrderStatus(order.ExternalId, order.Status);
 
         logger.LogInformation("Заявка {ExternalId} (ID: {Id}) успешно завершена.",
             order.ExternalId, order.Id);

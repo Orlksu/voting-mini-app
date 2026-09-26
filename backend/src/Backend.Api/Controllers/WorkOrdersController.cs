@@ -4,6 +4,7 @@ using Backend.Api.Services.WorkOrderService;
 using Backend.Contracts.Requests;
 using Backend.Contracts.Responses;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.ModelBinding;
 
 namespace Backend.Api.Controllers;
 
@@ -116,7 +117,10 @@ public class WorkOrdersController(
     [ProducesResponseType<WorkOrderDto>(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<IActionResult> Cancel(string id, [FromBody] CancelWorkOrderRequest? request, CancellationToken ct)
+    public async Task<IActionResult> Cancel(
+        string id, 
+        [FromBody(EmptyBodyBehavior = EmptyBodyBehavior.Allow)] CancelWorkOrderRequest? request = null, 
+        CancellationToken ct = default)
     {
         try
         {

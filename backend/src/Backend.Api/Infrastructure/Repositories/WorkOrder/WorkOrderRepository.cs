@@ -121,9 +121,17 @@ public class WorkOrderRepository(AppDbContext db) : IWorkOrderRepository
     public async Task UpdateStatusesAsync(IEnumerable<Guid> orderIds, OrderStatus newStatus, CancellationToken ct = default)
     {
         var ids = orderIds.ToList();
-        await db.WorkOrders
-            .Where(w => ids.Contains(w.Id))
-            .ExecuteUpdateAsync(setters => setters.SetProperty(w => w.Status, newStatus), ct);
+        if (ids.Count == 0)
+            return;
+
+        // Защита от затирания терминальных статусов (Cancelled / Completed) при гонке фонового расчета оптимизации
+        var query = db.WorkOrders.Where(w => ids.Contains(w.Id));
+        if (newStatus == OrderStatus.Dispatched)
+        {
+            query = query.Where(w => w.Status == OrderStatus.NotDispatched);
+        }
+
+        await query.ExecuteUpdateAsync(setters => setters.SetProperty(w => w.Status, newStatus), ct);
     }
 
     public async Task UpdateAsync(WorkOrder order, CancellationToken ct = default)

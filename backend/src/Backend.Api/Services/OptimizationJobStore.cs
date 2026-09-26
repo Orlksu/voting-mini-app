@@ -79,6 +79,51 @@ public class OptimizationJobStore
         return false;
     }
 
+    public void UpdateOrderStatus(string externalOrderId, OrderStatus newStatus)
+    {
+        if (string.IsNullOrWhiteSpace(externalOrderId))
+            return;
+
+        if (_lastResult != null)
+        {
+            var modifiedRoutes = _lastResult.Routes.Select(r =>
+            {
+                if (!r.Stops.Any(s => string.Equals(s.ExternalOrderId, externalOrderId, StringComparison.OrdinalIgnoreCase)))
+                    return r;
+
+                var updatedStops = r.Stops.Select(s =>
+                    string.Equals(s.ExternalOrderId, externalOrderId, StringComparison.OrdinalIgnoreCase)
+                        ? s with { Status = newStatus }
+                        : s
+                ).ToList();
+                return r with { Stops = updatedStops };
+            }).ToList();
+
+            _lastResult = _lastResult with { Routes = modifiedRoutes };
+        }
+
+        foreach (var job in _jobs.Values)
+        {
+            if (job.Result != null && job.Result.Routes.Any(r => r.Stops.Any(s => string.Equals(s.ExternalOrderId, externalOrderId, StringComparison.OrdinalIgnoreCase))))
+            {
+                var routes = job.Result.Routes.Select(r =>
+                {
+                    if (!r.Stops.Any(s => string.Equals(s.ExternalOrderId, externalOrderId, StringComparison.OrdinalIgnoreCase)))
+                        return r;
+
+                    return r with
+                    {
+                        Stops = r.Stops.Select(s => string.Equals(s.ExternalOrderId, externalOrderId, StringComparison.OrdinalIgnoreCase)
+                            ? s with { Status = newStatus }
+                            : s).ToList()
+                    };
+                }).ToList();
+
+                job.Result = job.Result with { Routes = routes };
+            }
+        }
+    }
+
     private static JobStatusResponseDto ToStatus(Job job) =>
         new(job.JobId, job.Status, job.ErrorMessage, job.CreatedAt);
 }
