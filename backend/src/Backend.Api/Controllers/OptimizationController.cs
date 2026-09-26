@@ -55,22 +55,43 @@ public class OptimizationController : ControllerBase
         [FromQuery] DateTimeOffset? date = null,
         CancellationToken ct = default)
     {
+        var mskOffset = TimeSpan.FromHours(3);
+        DateTimeOffset targetDate;
+        if (date.HasValue)
+        {
+            targetDate = date.Value;
+        }
+        else
+        {
+            var nextOrder = (await _workOrders.GetPendingOrdersForPlanningAsync(depotId, district, null, OrderStatus.NotDispatched, ct))
+                .OrderBy(o => o.PreferredWindow.Start)
+                .FirstOrDefault();
+
+            if (nextOrder != null)
+            {
+                var msk = nextOrder.PreferredWindow.Start.ToOffset(mskOffset);
+                targetDate = new DateTimeOffset(msk.Year, msk.Month, msk.Day, 0, 0, 0, mskOffset);
+            }
+            else
+            {
+                var nowMsk = DateTimeOffset.UtcNow.ToOffset(mskOffset);
+                targetDate = new DateTimeOffset(nowMsk.Year, nowMsk.Month, nowMsk.Day, 0, 0, 0, mskOffset);
+            }
+        }
+
         var engEntities = await _engineers.GetAvailableEngineersAsync(depotId, district, ct);
         var engineers = engEntities.Select(ToEngineerInputDto).ToList();
 
-        var woEntities = await _workOrders.GetPendingOrdersForPlanningAsync(depotId, district, date, OrderStatus.NotDispatched, ct);
+        var woEntities = await _workOrders.GetPendingOrdersForPlanningAsync(depotId, district, targetDate, OrderStatus.NotDispatched, ct);
         var orders = woEntities.Select(ToWorkOrderInputDto).ToList();
 
         if (engineers.Count == 0)
             return BadRequest("Нет доступных инженеров для оптимизации (проверьте /api/v1/engineers).");
         if (orders.Count == 0)
-            return BadRequest(date.HasValue
-                ? $"Нет нераспределённых заявок для оптимизации на дату {date.Value:yyyy-MM-dd}."
-                : "Нет нераспределённых заявок (проверьте /api/v1/workorders).");
+            return BadRequest($"Нет нераспределённых заявок для оптимизации на дату {targetDate:yyyy-MM-dd}.");
 
-        var planDateUtc = date ?? (orders.Select(o => o.WindowStart).FirstOrDefault(w => w.HasValue) ?? DateTimeOffset.UtcNow);
-        var mskOffset = TimeSpan.FromHours(3);
-        var planDateMsk = planDateUtc.ToOffset(mskOffset);
+        var planDateUtc = targetDate.ToUniversalTime();
+        var planDateMsk = targetDate.ToOffset(mskOffset);
 
         var alignedEngineers = engineers.Select(e =>
         {
@@ -122,21 +143,42 @@ public class OptimizationController : ControllerBase
         [FromQuery] DateTimeOffset? date = null,
         CancellationToken ct = default)
     {
+        var mskOffset = TimeSpan.FromHours(3);
+        DateTimeOffset targetDate;
+        if (date.HasValue)
+        {
+            targetDate = date.Value;
+        }
+        else
+        {
+            var nextOrder = (await _workOrders.GetPendingOrdersForPlanningAsync(depotId, district, null, status: null, ct: ct))
+                .OrderBy(o => o.PreferredWindow.Start)
+                .FirstOrDefault();
+
+            if (nextOrder != null)
+            {
+                var msk = nextOrder.PreferredWindow.Start.ToOffset(mskOffset);
+                targetDate = new DateTimeOffset(msk.Year, msk.Month, msk.Day, 0, 0, 0, mskOffset);
+            }
+            else
+            {
+                var nowMsk = DateTimeOffset.UtcNow.ToOffset(mskOffset);
+                targetDate = new DateTimeOffset(nowMsk.Year, nowMsk.Month, nowMsk.Day, 0, 0, 0, mskOffset);
+            }
+        }
+
         var engEntities = await _engineers.GetAvailableEngineersAsync(depotId, district, ct);
         var engineers = engEntities.Select(ToEngineerInputDto).ToList();
         if (engineers.Count == 0)
             return BadRequest("Нет доступных инженеров для перепланирования.");
 
-        var woEntities = await _workOrders.GetPendingOrdersForPlanningAsync(depotId, district, date, status: null, ct: ct);
+        var woEntities = await _workOrders.GetPendingOrdersForPlanningAsync(depotId, district, targetDate, status: null, ct: ct);
         var orders = woEntities.Select(ToWorkOrderInputDto).ToList();
         if (orders.Count == 0)
-            return BadRequest(date.HasValue 
-                ? $"Нет незавершенных заявок для перепланирования на дату {date.Value:yyyy-MM-dd}."
-                : "Нет незавершенных заявок для перепланирования.");
+            return BadRequest($"Нет незавершенных заявок для перепланирования на дату {targetDate:yyyy-MM-dd}.");
 
-        var planDateUtc = date ?? (orders.Select(o => o.WindowStart).FirstOrDefault(w => w.HasValue) ?? DateTimeOffset.UtcNow);
-        var mskOffset = TimeSpan.FromHours(3);
-        var planDateMsk = planDateUtc.ToOffset(mskOffset);
+        var planDateUtc = targetDate.ToUniversalTime();
+        var planDateMsk = targetDate.ToOffset(mskOffset);
 
         var alignedEngineers = engineers.Select(e =>
         {
@@ -176,10 +218,22 @@ public class OptimizationController : ControllerBase
     [HttpGet("jobs/{jobId:guid}")]
     [ProducesResponseType<JobStatusResponseDto>(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public ActionResult<JobStatusResponseDto> GetJobStatus(Guid jobId)
+    public async Task<ActionResult<JobStatusResponseDto>> GetJobStatus(
+        Guid jobId, 
+        [FromServices] IOperationResultRepository opRepo, 
+        CancellationToken ct = default)
     {
         var job = _jobStore.GetStatus(jobId);
-        return job == null ? NotFound() : Ok(job);
+        if (job != null)
+            return Ok(job);
+
+        var dbResult = await opRepo.GetByJobIdWithDetailsAsync(jobId, ct);
+        if (dbResult != null)
+        {
+            return Ok(new JobStatusResponseDto(jobId, JobStatus.Completed, null, dbResult.CreatedAt));
+        }
+
+        return NotFound();
     }
 
     /// <summary>
@@ -189,14 +243,23 @@ public class OptimizationController : ControllerBase
     [ProducesResponseType<OptimizationResultDto>(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public ActionResult<OptimizationResultDto> GetJobResult(Guid jobId)
+    public async Task<ActionResult<OptimizationResultDto>> GetJobResult(
+        Guid jobId, 
+        [FromServices] IOperationResultRepository opRepo, 
+        CancellationToken ct = default)
     {
-        if (!_jobStore.TryGetResult(jobId, out var result))
+        if (_jobStore.TryGetResult(jobId, out var result) && result != null)
         {
-            return NotFound();
+            return Ok(result);
         }
 
-        return result == null ? NoContent() : Ok(result);
+        var dbResult = await opRepo.GetByJobIdWithDetailsAsync(jobId, ct);
+        if (dbResult != null)
+        {
+            return Ok(MapToDto(dbResult));
+        }
+
+        return NotFound();
     }
 
     /// <summary>
@@ -230,7 +293,6 @@ public class OptimizationController : ControllerBase
             try
             {
                 var result = await _optimizer.OptimizeAsync(request, CancellationToken.None);
-                _jobStore.Complete(jobId, result);
 
                 // Персистим рассчитанный план в БД и переводим статус заявок в Dispatched
                 try
@@ -282,6 +344,7 @@ public class OptimizationController : ControllerBase
                                     Id = Guid.NewGuid(),
                                     EngineerRouteId = routeId,
                                     Sequence = s.Sequence,
+                                    OrderId = s.OrderId,
                                     ExternalOrderId = s.ExternalOrderId,
                                     Location = new Location
                                     {
@@ -383,12 +446,15 @@ public class OptimizationController : ControllerBase
                         await woRepo.UpdateStatusesAsync(unassignedIds.Distinct(), OrderStatus.NotDispatched, CancellationToken.None);
                     }
 
+                    _jobStore.Complete(jobId, result);
+
                     _logger.LogInformation("Job {JobId}: маршруты успешно сохранены в БД ({RoutesCount} маршрутов, {OrdersCount} назначенных заявок обновлены на Dispatched, {UnassignedCount} неназначенных заявок возвращены в NotDispatched)",
                         jobId, operationResult.Routes.Count, assignedIds.Count, unassignedIds.Count);
                 }
                 catch (Exception persistEx)
                 {
                     _logger.LogError(persistEx, "Job {JobId}: ошибка сохранения рассчитанного плана в БД", jobId);
+                    _jobStore.Fail(jobId, $"Ошибка сохранения рассчитанного плана в БД: {persistEx.Message}");
                 }
             }
             catch (Exception ex)
@@ -486,4 +552,55 @@ public class OptimizationController : ControllerBase
         TaskType = o.TaskType,
         DurationMinutes = (int)o.ServiceDuration.TotalMinutes,
     };
+
+    private static OptimizationResultDto MapToDto(OperationResult op) => new(
+        op.Id,
+        op.PlanDate,
+        new PlanComparisonMetricsDto(
+            op.Metrics.TotalOrders,
+            op.Metrics.AssignedOrders,
+            op.Metrics.UnassignedOrders,
+            op.Metrics.OptimizedActiveEngineers,
+            op.Metrics.BaselineActiveEngineers,
+            op.Metrics.SavedEngineersCount,
+            op.Metrics.OptimizedTotalDistanceKm,
+            op.Metrics.BaselineTotalDistanceKm,
+            op.Metrics.DistanceEconomyPercent),
+        op.Routes.Select(r => new EngineerRouteDto(
+            r.EngineerExternalId,
+            r.EngineerName,
+            r.Transport,
+            r.Stops.Count,
+            r.Stops.Count,
+            0,
+            0,
+            r.TotalDistanceKm,
+            r.BaselineDistanceKm ?? Math.Round(r.TotalDistanceKm * 1.25, 2),
+            (int)r.TotalTravelTime.TotalMinutes,
+            r.Stops.OrderBy(s => s.Sequence).Select(s => new RouteStopDto(
+                s.Sequence,
+                s.ExternalOrderId,
+                s.Location?.RawAddress ?? string.Empty,
+                s.Location?.Coordinates.Latitude ?? 0.0,
+                s.Location?.Coordinates.Longitude ?? 0.0,
+                s.EstimatedArrival,
+                s.ServiceStart,
+                s.ServiceEnd,
+                (int)s.TravelTimeFromPrevious.TotalMinutes,
+                s.DistanceFromPreviousKm,
+                string.Empty,
+                OrderPriority.Normal,
+                s.AssignmentReason,
+                OrderStatus.Dispatched,
+                s.OrderId
+            )).ToList(),
+            r.EncodedPolyline,
+            null, null, null
+        )).ToList(),
+        op.UnassignedOrders.Select(u => new UnassignedOrderDto(
+            u.ExternalOrderId,
+            string.Empty,
+            u.ReasonCode,
+            u.ReasonDescription
+        )).ToList());
 }

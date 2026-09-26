@@ -55,24 +55,48 @@ public class WorkOrderService(
                         .Concat(route.Stops.OrderBy(s => s.Sequence).Select(s => (s.Location.Coordinates.Latitude, s.Location.Coordinates.Longitude))))
                     : null);
 
-            var externalIds = route.Stops
+            var orderGuids = route.Stops
+                .Select(s => s.OrderId)
+                .Where(id => id.HasValue)
+                .Select(id => id!.Value)
+                .Distinct()
+                .ToList();
+
+            var matchedByIds = orderGuids.Count > 0
+                ? await workOrders.GetByIdsAsync(orderGuids, ct)
+                : [];
+            var orderByIdMap = matchedByIds.ToDictionary(o => o.Id);
+
+            var fallbackExternalIds = route.Stops
+                .Where(s => !s.OrderId.HasValue || !orderByIdMap.ContainsKey(s.OrderId.Value))
                 .Select(s => s.ExternalOrderId)
                 .Where(id => !string.IsNullOrWhiteSpace(id))
                 .Distinct()
                 .ToList();
-            var matchedOrders = await workOrders.GetByExternalIdsAsync(externalIds, ct);
-            var orderMap = matchedOrders
-                .GroupBy(o => o.ExternalId, StringComparer.OrdinalIgnoreCase)
-                .ToDictionary(
-                    g => g.Key, 
-                    g => g.FirstOrDefault(o => 
-                        (engineer.DepotId.HasValue && o.DepotId == engineer.DepotId) ||
-                        (!string.IsNullOrEmpty(engineer.District) && string.Equals(o.District, engineer.District, StringComparison.OrdinalIgnoreCase))) ?? g.First(), 
-                    StringComparer.OrdinalIgnoreCase);
+
+            var fallbackOrderMap = fallbackExternalIds.Count > 0
+                ? (await workOrders.GetByExternalIdsAsync(fallbackExternalIds, ct))
+                    .GroupBy(o => o.ExternalId, StringComparer.OrdinalIgnoreCase)
+                    .ToDictionary(
+                        g => g.Key, 
+                        g => g.FirstOrDefault(o => 
+                            (engineer.DepotId.HasValue && o.DepotId == engineer.DepotId) ||
+                            (!string.IsNullOrEmpty(engineer.District) && string.Equals(o.District, engineer.District, StringComparison.OrdinalIgnoreCase))) ?? g.First(), 
+                        StringComparer.OrdinalIgnoreCase)
+                : new Dictionary<string, WorkOrder>(StringComparer.OrdinalIgnoreCase);
 
             var stops = route.Stops.OrderBy(s => s.Sequence).Select(s =>
             {
-                orderMap.TryGetValue(s.ExternalOrderId, out var wo);
+                WorkOrder? wo = null;
+                if (s.OrderId.HasValue && orderByIdMap.TryGetValue(s.OrderId.Value, out var matched))
+                {
+                    wo = matched;
+                }
+                else if (!string.IsNullOrWhiteSpace(s.ExternalOrderId) && fallbackOrderMap.TryGetValue(s.ExternalOrderId, out var fallback))
+                {
+                    wo = fallback;
+                }
+
                 return new RouteStopDto(
                     s.Sequence,
                     s.ExternalOrderId,
@@ -88,7 +112,7 @@ public class WorkOrderService(
                     wo?.Priority ?? OrderPriority.Normal,
                     s.AssignmentReason,
                     wo?.Status ?? OrderStatus.Cancelled,
-                    wo?.Id
+                    wo?.Id ?? s.OrderId
                 );
             }).ToList();
 
@@ -537,9 +561,13 @@ public class WorkOrderService(
                 var windowStart = o.WindowStart ?? DateTimeOffset.UtcNow;
                 var windowEnd = o.WindowEnd ?? windowStart.AddMinutes(o.DurationMinutes);
 
+                var extId = !string.IsNullOrWhiteSpace(o.ExternalId)
+                    ? o.ExternalId.Trim()
+                    : $"WO-IMP-{Guid.NewGuid():N}"[..15].ToUpperInvariant();
+
                 entities.Add(new WorkOrder
                 {
-                    ExternalId = o.ExternalId,
+                    ExternalId = extId,
                     District = district,
                     Location = new Location
                     {

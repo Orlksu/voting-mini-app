@@ -7,6 +7,7 @@ public class RouteStop
     public Guid Id { get; init; } = Guid.NewGuid();
     public Guid EngineerRouteId { get; set; }
     public int Sequence { get; set; }
+    public Guid? OrderId { get; set; }
     public string ExternalOrderId { get; set; } = string.Empty;
     public Location Location { get; set; } = null!;
     public DateTimeOffset EstimatedArrival { get; set; }

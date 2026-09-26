@@ -297,6 +297,9 @@ namespace Backend.Api.Infrastructure.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)");
 
+                    b.Property<Guid?>("OrderId")
+                        .HasColumnType("uuid");
+
                     b.Property<int>("Sequence")
                         .HasColumnType("integer");
 
@@ -336,6 +339,8 @@ namespace Backend.Api.Infrastructure.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("ExternalOrderId");
+
+                    b.HasIndex("OrderId");
 
                     b.HasIndex("EngineerRouteId", "Sequence")
                         .IsUnique();

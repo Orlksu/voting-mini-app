@@ -74,6 +74,18 @@ public class WorkOrderRepository(AppDbContext db) : IWorkOrderRepository
     public async Task<WorkOrder?> GetByIdAsync(Guid id, CancellationToken ct = default)
         => await db.WorkOrders.AsNoTracking().FirstOrDefaultAsync(w => w.Id == id, ct);
 
+    public async Task<List<WorkOrder>> GetByIdsAsync(IEnumerable<Guid> ids, CancellationToken ct = default)
+    {
+        var idList = ids.ToList();
+        if (idList.Count == 0)
+            return [];
+
+        return await db.WorkOrders
+            .AsNoTracking()
+            .Where(w => idList.Contains(w.Id))
+            .ToListAsync(ct);
+    }
+
     public async Task<WorkOrder?> GetByExternalIdAsync(string externalId, CancellationToken ct = default)
         => await db.WorkOrders.AsNoTracking().FirstOrDefaultAsync(w => w.ExternalId == externalId, ct);
 

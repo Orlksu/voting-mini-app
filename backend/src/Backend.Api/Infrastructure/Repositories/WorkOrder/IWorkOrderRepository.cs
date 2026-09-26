@@ -9,6 +9,7 @@ public interface IWorkOrderRepository
     Task AddRangeAsync(IEnumerable<WorkOrder> orders, CancellationToken ct = default);
     Task<List<WorkOrder>> GetAllAsync(CancellationToken ct = default);
     Task<WorkOrder?> GetByIdAsync(Guid id, CancellationToken ct = default);
+    Task<List<WorkOrder>> GetByIdsAsync(IEnumerable<Guid> ids, CancellationToken ct = default);
     Task<WorkOrder?> GetByExternalIdAsync(string externalId, CancellationToken ct = default);
     Task<WorkOrder?> GetByExternalIdAndDistrictAsync(string externalId, string district, CancellationToken ct = default);
     Task<List<WorkOrder>> FindByIdentifierAsync(string identifier, string? district = null, CancellationToken ct = default);
