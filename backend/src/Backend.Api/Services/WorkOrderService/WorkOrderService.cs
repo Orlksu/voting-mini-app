@@ -57,21 +57,36 @@ public class WorkOrderService(
                         .Concat(route.Stops.OrderBy(s => s.Sequence).Select(s => (s.Location.Coordinates.Latitude, s.Location.Coordinates.Longitude))))
                     : null);
 
-            var stops = route.Stops.OrderBy(s => s.Sequence).Select(s => new RouteStopDto(
-                s.Sequence,
-                s.ExternalOrderId,
-                s.Location?.RawAddress ?? string.Empty,
-                s.Location?.Coordinates.Latitude ?? 0.0,
-                s.Location?.Coordinates.Longitude ?? 0.0,
-                s.EstimatedArrival,
-                s.ServiceStart,
-                s.ServiceEnd,
-                (int)s.TravelTimeFromPrevious.TotalMinutes,
-                s.DistanceFromPreviousKm,
-                string.Empty,
-                OrderPriority.Normal,
-                s.AssignmentReason
-            )).ToList();
+            var externalIds = route.Stops
+                .Select(s => s.ExternalOrderId)
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .Distinct()
+                .ToList();
+            var matchedOrders = await workOrders.GetByExternalIdsAsync(externalIds, ct);
+            var orderMap = matchedOrders
+                .GroupBy(o => o.ExternalId, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+
+            var stops = route.Stops.OrderBy(s => s.Sequence).Select(s =>
+            {
+                orderMap.TryGetValue(s.ExternalOrderId, out var wo);
+                return new RouteStopDto(
+                    s.Sequence,
+                    s.ExternalOrderId,
+                    s.Location?.RawAddress ?? (wo?.Location?.RawAddress ?? string.Empty),
+                    s.Location?.Coordinates.Latitude ?? (wo?.Location?.Coordinates.Latitude ?? 0.0),
+                    s.Location?.Coordinates.Longitude ?? (wo?.Location?.Coordinates.Longitude ?? 0.0),
+                    s.EstimatedArrival,
+                    s.ServiceStart,
+                    s.ServiceEnd,
+                    (int)s.TravelTimeFromPrevious.TotalMinutes,
+                    s.DistanceFromPreviousKm,
+                    wo?.TaskType ?? string.Empty,
+                    wo?.Priority ?? OrderPriority.Normal,
+                    s.AssignmentReason,
+                    wo?.Status ?? OrderStatus.Dispatched
+                );
+            }).ToList();
 
             return new EngineerRouteDto(
                 route.EngineerExternalId,
@@ -96,6 +111,35 @@ public class WorkOrderService(
                 string.Equals(r.EngineerExternalId, engineer.ExternalId, StringComparison.OrdinalIgnoreCase));
             if (memoryRoute != null)
             {
+                var externalIds = memoryRoute.Stops
+                    .Select(s => s.ExternalOrderId)
+                    .Where(id => !string.IsNullOrWhiteSpace(id))
+                    .Distinct()
+                    .ToList();
+                var matchedOrders = await workOrders.GetByExternalIdsAsync(externalIds, ct);
+                if (matchedOrders.Count > 0)
+                {
+                    var orderMap = matchedOrders
+                        .GroupBy(o => o.ExternalId, StringComparer.OrdinalIgnoreCase)
+                        .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+
+                    var enrichedStops = memoryRoute.Stops.Select(s =>
+                    {
+                        if (orderMap.TryGetValue(s.ExternalOrderId, out var wo))
+                        {
+                            return s with
+                            {
+                                Status = wo.Status,
+                                TaskType = string.IsNullOrEmpty(s.TaskType) ? wo.TaskType : s.TaskType,
+                                Priority = wo.Priority
+                            };
+                        }
+                        return s;
+                    }).ToList();
+
+                    return memoryRoute with { Stops = enrichedStops };
+                }
+
                 return memoryRoute;
             }
         }
@@ -165,6 +209,63 @@ public class WorkOrderService(
         }
 
         return await workOrders.DeleteAsync(targetOrder, ct);
+    }
+
+    public async Task<WorkOrderDto> CancelAsync(string identifier, string? reason = null, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(identifier))
+            throw new KeyNotFoundException("Идентификатор заявки не может быть пустым.");
+
+        if (reason != null && reason.Trim().Length > 500)
+            throw new ArgumentException("Длина причины отмены (Reason) не должна превышать 500 символов.");
+
+        var matches = await workOrders.FindByIdentifierAsync(identifier, null, ct);
+        if (matches.Count == 0)
+            throw new KeyNotFoundException($"Заявка с идентификатором '{identifier.Trim()}' не найдена.");
+
+        if (matches.Count > 1)
+        {
+            var districts = string.Join(", ", matches.Select(o => $"'{o.District}'"));
+            throw new InvalidOperationException(
+                $"Найдено несколько заявок ({matches.Count}) с номером '{identifier.Trim()}' в разных районах ({districts}). " +
+                $"Для отмены заявки укажите точный уникальный Id (Guid) заявки.");
+        }
+
+        var order = matches[0];
+        order.Cancel(reason);
+        await workOrders.UpdateAsync(order, ct);
+
+        logger.LogInformation("Заявка {ExternalId} (ID: {Id}) успешно отменена. Причина: {Reason}",
+            order.ExternalId, order.Id, order.CancellationReason ?? "не указана");
+
+        return ToDto(order);
+    }
+
+    public async Task<WorkOrderDto> CompleteAsync(string identifier, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(identifier))
+            throw new KeyNotFoundException("Идентификатор заявки не может быть пустым.");
+
+        var matches = await workOrders.FindByIdentifierAsync(identifier, null, ct);
+        if (matches.Count == 0)
+            throw new KeyNotFoundException($"Заявка с идентификатором '{identifier.Trim()}' не найдена.");
+
+        if (matches.Count > 1)
+        {
+            var districts = string.Join(", ", matches.Select(o => $"'{o.District}'"));
+            throw new InvalidOperationException(
+                $"Найдено несколько заявок ({matches.Count}) с номером '{identifier.Trim()}' в разных районах ({districts}). " +
+                $"Для завершения заявки укажите точный уникальный Id (Guid) заявки.");
+        }
+
+        var order = matches[0];
+        order.Complete();
+        await workOrders.UpdateAsync(order, ct);
+
+        logger.LogInformation("Заявка {ExternalId} (ID: {Id}) успешно завершена.",
+            order.ExternalId, order.Id);
+
+        return ToDto(order);
     }
 
     public async Task<WorkOrderDto> CreateAsync(CreateWorkOrderRequest request, CancellationToken ct = default)
@@ -349,7 +450,8 @@ public class WorkOrderService(
         o.Priority,
         o.Status,
         o.TaskType,
-        o.DepotId);
+        o.DepotId,
+        o.CancellationReason);
 
     public async Task<int> AddFromImportAsync(DepotDto depotDto, List<WorkOrderInputDto> orders, CancellationToken ct = default)
     {

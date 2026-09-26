@@ -16,5 +16,6 @@ public interface IWorkOrderRepository
     Task<List<WorkOrder>> GetNotDispatchedByDepotIdAsync(Guid depotId, CancellationToken ct = default);
     Task<List<WorkOrder>> GetNotDispatchedByDistrictAsync(string district, CancellationToken ct = default);
     Task UpdateStatusesAsync(IEnumerable<Guid> orderIds, OrderStatus newStatus, CancellationToken ct = default);
+    Task UpdateAsync(WorkOrder order, CancellationToken ct = default);
     Task<bool> DeleteAsync(WorkOrder order, CancellationToken ct = default);
 }

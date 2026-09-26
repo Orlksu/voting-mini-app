@@ -37,6 +37,7 @@ public class WorkOrderConfiguration : IEntityTypeConfiguration<WorkOrder>
 
         builder.Property(x => x.ServiceDuration).HasColumnType("interval");
         builder.Property(x => x.TaskType).HasMaxLength(100);
+        builder.Property(x => x.CancellationReason).HasMaxLength(500);
         
         builder.Property(x => x.RequiredSkill)
             .HasConversion<string>()

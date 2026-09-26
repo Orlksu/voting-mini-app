@@ -103,6 +103,75 @@ public class WorkOrdersController(
     }
 
     /// <summary>
+    /// Отмена заявки на обслуживание с указанием причины отмены.
+    /// Завершенные (Completed) заявки отменить нельзя (400 Bad Request).
+    /// </summary>
+    /// <param name="id">Уникальный идентификатор заявки (Guid или уникальный ExternalId).</param>
+    /// <param name="request">Тело запроса с опциональной причиной отмены.</param>
+    /// <param name="ct">Токен отмены запроса.</param>
+    /// <response code="200">Заявка успешно отменена.</response>
+    /// <response code="400">Ошибка валидации причины или попытка отменить завершенную заявку.</response>
+    /// <response code="404">Заявка не найдена.</response>
+    [HttpPost("{id}/cancel")]
+    [ProducesResponseType<WorkOrderDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> Cancel(string id, [FromBody] CancelWorkOrderRequest? request, CancellationToken ct)
+    {
+        try
+        {
+            var result = await workOrderService.CancelAsync(id, request?.Reason, ct);
+            return Ok(result);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(ex.Message);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(ex.Message);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Завершение выполнения заявки на обслуживание.
+    /// Отмененные (Cancelled) заявки завершить нельзя (400 Bad Request).
+    /// </summary>
+    /// <param name="id">Уникальный идентификатор заявки (Guid или уникальный ExternalId).</param>
+    /// <param name="ct">Токен отмены запроса.</param>
+    /// <response code="200">Заявка успешно переведена в статус завершенной.</response>
+    /// <response code="400">Попытка завершить отмененную заявку или неоднозначный идентификатор.</response>
+    /// <response code="404">Заявка не найдена.</response>
+    [HttpPost("{id}/complete")]
+    [ProducesResponseType<WorkOrderDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> Complete(string id, CancellationToken ct)
+    {
+        try
+        {
+            var result = await workOrderService.CompleteAsync(id, ct);
+            return Ok(result);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(ex.Message);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(ex.Message);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ex.Message);
+        }
+    }
+
+    /// <summary>
     /// Загрузка CSV-файлов с заявками на обслуживание и геокодирование адресов.
     /// </summary>
     /// <param name="files">Список CSV-файлов в формате multipart/form-data (до 20 МБ).</param>

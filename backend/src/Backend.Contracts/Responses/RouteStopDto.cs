@@ -15,5 +15,6 @@ public record RouteStopDto(
     double DistanceFromPrevKm,
     string TaskType,
     OrderPriority Priority,
-    string AssignmentReason
+    string AssignmentReason,
+    OrderStatus Status = OrderStatus.Dispatched
 );

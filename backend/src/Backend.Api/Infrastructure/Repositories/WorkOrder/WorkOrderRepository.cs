@@ -126,6 +126,15 @@ public class WorkOrderRepository(AppDbContext db) : IWorkOrderRepository
             .ExecuteUpdateAsync(setters => setters.SetProperty(w => w.Status, newStatus), ct);
     }
 
+    public async Task UpdateAsync(WorkOrder order, CancellationToken ct = default)
+    {
+        if (db.Entry(order).State == EntityState.Detached)
+        {
+            db.WorkOrders.Update(order);
+        }
+        await db.SaveChangesAsync(ct);
+    }
+
     public async Task<bool> DeleteAsync(WorkOrder order, CancellationToken ct = default)
     {
         try
