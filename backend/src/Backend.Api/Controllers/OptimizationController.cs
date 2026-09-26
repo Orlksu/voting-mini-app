@@ -58,11 +58,8 @@ public class OptimizationController : ControllerBase
         var engEntities = await _engineers.GetAvailableEngineersAsync(depotId, district, ct);
         var engineers = engEntities.Select(ToEngineerInputDto).ToList();
 
-        var woEntities = await _workOrders.GetPendingOrdersForPlanningAsync(depotId, district, date, ct);
-        var orders = woEntities
-            .Where(o => o.Status == OrderStatus.NotDispatched)
-            .Select(ToWorkOrderInputDto)
-            .ToList();
+        var woEntities = await _workOrders.GetPendingOrdersForPlanningAsync(depotId, district, date, OrderStatus.NotDispatched, ct);
+        var orders = woEntities.Select(ToWorkOrderInputDto).ToList();
 
         if (engineers.Count == 0)
             return BadRequest("Нет доступных инженеров для оптимизации (проверьте /api/v1/engineers).");
@@ -130,7 +127,7 @@ public class OptimizationController : ControllerBase
         if (engineers.Count == 0)
             return BadRequest("Нет доступных инженеров для перепланирования.");
 
-        var woEntities = await _workOrders.GetPendingOrdersForPlanningAsync(depotId, district, date, ct);
+        var woEntities = await _workOrders.GetPendingOrdersForPlanningAsync(depotId, district, date, status: null, ct: ct);
         var orders = woEntities.Select(ToWorkOrderInputDto).ToList();
         if (orders.Count == 0)
             return BadRequest(date.HasValue 
@@ -315,30 +312,43 @@ public class OptimizationController : ControllerBase
 
                     await opRepo.SaveResultAsync(operationResult, CancellationToken.None);
 
-                    var assignedExternalIds = result.Routes
+                    // Назначенные заявки: берем точные InternalId (Guid) из остановок маршрутов
+                    var assignedIds = result.Routes
                         .SelectMany(r => r.Stops)
-                        .Select(s => s.ExternalOrderId)
-                        .Distinct(StringComparer.OrdinalIgnoreCase)
-                        .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-                    var assignedFromRequest = request.Orders
-                        .Where(o => assignedExternalIds.Contains(o.ExternalId))
+                        .Select(s => s.OrderId)
+                        .Where(id => id.HasValue)
+                        .Select(id => id!.Value)
+                        .Distinct()
                         .ToList();
 
-                    var assignedIds = assignedFromRequest
-                        .Where(o => o.InternalId.HasValue)
-                        .Select(o => o.InternalId!.Value)
-                        .ToList();
-
-                    var missingAssigned = assignedFromRequest
-                        .Where(o => !o.InternalId.HasValue)
-                        .Select(o => (o.ExternalId, o.District))
-                        .ToList();
-
-                    if (missingAssigned.Count > 0)
+                    // Резервное сопоставление по (ExternalId, District), если OrderId не был заполнен солвером
+                    if (assignedIds.Count == 0 && result.Routes.Any(r => r.Stops.Count > 0))
                     {
-                        var fetched = await woRepo.GetByExternalIdsAndDistrictsAsync(missingAssigned, CancellationToken.None);
-                        assignedIds.AddRange(fetched.Select(f => f.Id));
+                        var assignedExtStops = result.Routes
+                            .SelectMany(r => r.Stops)
+                            .Select(s => s.ExternalOrderId.Trim())
+                            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+                        var fallbackOrders = request.Orders
+                            .Where(o => assignedExtStops.Contains(o.ExternalId.Trim()))
+                            .ToList();
+
+                        assignedIds = fallbackOrders
+                            .Where(o => o.InternalId.HasValue)
+                            .Select(o => o.InternalId!.Value)
+                            .Distinct()
+                            .ToList();
+
+                        var missingAssigned = fallbackOrders
+                            .Where(o => !o.InternalId.HasValue)
+                            .Select(o => (o.ExternalId, o.District))
+                            .ToList();
+
+                        if (missingAssigned.Count > 0)
+                        {
+                            var fetched = await woRepo.GetByExternalIdsAndDistrictsAsync(missingAssigned, CancellationToken.None);
+                            assignedIds.AddRange(fetched.Select(f => f.Id));
+                        }
                     }
 
                     if (assignedIds.Count > 0)
@@ -346,21 +356,18 @@ public class OptimizationController : ControllerBase
                         await woRepo.UpdateStatusesAsync(assignedIds.Distinct(), OrderStatus.Dispatched, CancellationToken.None);
                     }
 
-                    var unassignedExternalIds = result.UnassignedOrders
-                        .Select(u => u.ExternalOrderId)
-                        .Distinct(StringComparer.OrdinalIgnoreCase)
-                        .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
+                    // Неназначенные заявки: все заказы из запроса, не попавшие в назначенные
+                    var assignedSet = assignedIds.ToHashSet();
                     var unassignedFromRequest = request.Orders
-                        .Where(o => unassignedExternalIds.Contains(o.ExternalId))
+                        .Where(o => o.InternalId.HasValue && !assignedSet.Contains(o.InternalId.Value))
                         .ToList();
 
                     var unassignedIds = unassignedFromRequest
-                        .Where(o => o.InternalId.HasValue)
                         .Select(o => o.InternalId!.Value)
+                        .Distinct()
                         .ToList();
 
-                    var missingUnassigned = unassignedFromRequest
+                    var missingUnassigned = request.Orders
                         .Where(o => !o.InternalId.HasValue)
                         .Select(o => (o.ExternalId, o.District))
                         .ToList();
@@ -368,7 +375,7 @@ public class OptimizationController : ControllerBase
                     if (missingUnassigned.Count > 0)
                     {
                         var fetched = await woRepo.GetByExternalIdsAndDistrictsAsync(missingUnassigned, CancellationToken.None);
-                        unassignedIds.AddRange(fetched.Select(f => f.Id));
+                        unassignedIds.AddRange(fetched.Where(f => !assignedSet.Contains(f.Id)).Select(f => f.Id));
                     }
 
                     if (unassignedIds.Count > 0)

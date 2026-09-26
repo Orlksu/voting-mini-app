@@ -145,12 +145,22 @@ public class WorkOrderRepository(AppDbContext db) : IWorkOrderRepository
         Guid? depotId = null, 
         string? district = null, 
         DateTimeOffset? targetDate = null, 
+        OrderStatus? status = null, 
         CancellationToken ct = default)
     {
         var query = db.WorkOrders
             .AsNoTracking()
             .Include(w => w.Depot)
-            .Where(w => w.Status == OrderStatus.NotDispatched || w.Status == OrderStatus.Dispatched);
+            .AsQueryable();
+
+        if (status.HasValue)
+        {
+            query = query.Where(w => w.Status == status.Value);
+        }
+        else
+        {
+            query = query.Where(w => w.Status == OrderStatus.NotDispatched || w.Status == OrderStatus.Dispatched);
+        }
 
         if (depotId.HasValue)
         {

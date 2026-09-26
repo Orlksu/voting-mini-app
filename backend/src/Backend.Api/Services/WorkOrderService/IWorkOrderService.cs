@@ -18,5 +18,5 @@ public interface IWorkOrderService
         IProgress<(int Processed, int Total, string Stage)>? progress = null,
         CancellationToken ct = default);
     Task<List<WorkOrderDto>> GetAllAsync(CancellationToken ct = default);
-    Task<EngineerRouteDto?> GetRouteByEngineerAsync(string identifier, CancellationToken ct = default);
+    Task<EngineerRouteDto?> GetRouteByEngineerAsync(string identifier, DateTimeOffset? date = null, CancellationToken ct = default);
 }

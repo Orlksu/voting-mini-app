@@ -24,7 +24,7 @@ public class WorkOrderService(
     IGeocoder geocoder,
     ILogger<WorkOrderService> logger) : IWorkOrderService
 {
-    public async Task<EngineerRouteDto?> GetRouteByEngineerAsync(string identifier, CancellationToken ct = default)
+    public async Task<EngineerRouteDto?> GetRouteByEngineerAsync(string identifier, DateTimeOffset? date = null, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(identifier))
             return null;
@@ -40,8 +40,8 @@ public class WorkOrderService(
         if (engineer is null)
             return null;
 
-        // 1. Поиск сохранённого маршрута в БД (сортируем хронологически по времени первого визита)
-        var engineerRoutes = await routes.GetByEngineerAsync(engineer.Id, ct);
+        // 1. Поиск сохранённого маршрута в БД (с опциональной фильтрацией по целевой дате)
+        var engineerRoutes = await routes.GetByEngineerAsync(engineer.Id, date, ct);
         if (engineerRoutes.Count > 0)
         {
             var route = engineerRoutes.First();
@@ -118,56 +118,68 @@ public class WorkOrderService(
         var lastPlan = jobStore.LastResult;
         if (lastPlan != null)
         {
-            var memoryRoute = lastPlan.Routes.FirstOrDefault(r =>
-                string.Equals(r.EngineerExternalId, engineer.ExternalId, StringComparison.OrdinalIgnoreCase));
-            if (memoryRoute != null)
+            bool dateMatches = true;
+            if (date.HasValue)
             {
-                var externalIds = memoryRoute.Stops
-                    .Select(s => s.ExternalOrderId)
-                    .Where(id => !string.IsNullOrWhiteSpace(id))
-                    .Distinct()
-                    .ToList();
-                var matchedOrders = await workOrders.GetByExternalIdsAsync(externalIds, ct);
-                if (matchedOrders.Count > 0)
+                var msk = TimeSpan.FromHours(3);
+                var targetMsk = date.Value.ToOffset(msk).Date;
+                var planMsk = lastPlan.PlanDate.ToOffset(msk).Date;
+                dateMatches = targetMsk == planMsk;
+            }
+
+            if (dateMatches)
+            {
+                var memoryRoute = lastPlan.Routes.FirstOrDefault(r =>
+                    string.Equals(r.EngineerExternalId, engineer.ExternalId, StringComparison.OrdinalIgnoreCase));
+                if (memoryRoute != null)
                 {
-                    var orderMap = matchedOrders
-                        .GroupBy(o => o.ExternalId, StringComparer.OrdinalIgnoreCase)
-                        .ToDictionary(
-                            g => g.Key, 
-                            g => g.FirstOrDefault(o => 
-                        (engineer.DepotId.HasValue && o.DepotId == engineer.DepotId) ||
-                        (!string.IsNullOrEmpty(engineer.District) && string.Equals(o.District, engineer.District, StringComparison.OrdinalIgnoreCase))) ?? g.First(), 
-                            StringComparer.OrdinalIgnoreCase);
-
-                    var enrichedStops = memoryRoute.Stops.Select(s =>
+                    var externalIds = memoryRoute.Stops
+                        .Select(s => s.ExternalOrderId)
+                        .Where(id => !string.IsNullOrWhiteSpace(id))
+                        .Distinct()
+                        .ToList();
+                    var matchedOrders = await workOrders.GetByExternalIdsAsync(externalIds, ct);
+                    if (matchedOrders.Count > 0)
                     {
-                        if (orderMap.TryGetValue(s.ExternalOrderId, out var wo))
+                        var orderMap = matchedOrders
+                            .GroupBy(o => o.ExternalId, StringComparer.OrdinalIgnoreCase)
+                            .ToDictionary(
+                                g => g.Key, 
+                                g => g.FirstOrDefault(o => 
+                            (engineer.DepotId.HasValue && o.DepotId == engineer.DepotId) ||
+                            (!string.IsNullOrEmpty(engineer.District) && string.Equals(o.District, engineer.District, StringComparison.OrdinalIgnoreCase))) ?? g.First(), 
+                                StringComparer.OrdinalIgnoreCase);
+
+                        var enrichedStops = memoryRoute.Stops.Select(s =>
                         {
-                            return s with
+                            if (orderMap.TryGetValue(s.ExternalOrderId, out var wo))
                             {
-                                Status = wo.Status,
-                                TaskType = string.IsNullOrEmpty(s.TaskType) ? wo.TaskType : s.TaskType,
-                                Priority = wo.Priority,
-                                OrderId = wo.Id
-                            };
-                        }
-                        return s with { Status = OrderStatus.Cancelled };
-                    }).ToList();
+                                return s with
+                                {
+                                    Status = wo.Status,
+                                    TaskType = string.IsNullOrEmpty(s.TaskType) ? wo.TaskType : s.TaskType,
+                                    Priority = wo.Priority,
+                                    OrderId = wo.Id
+                                };
+                            }
+                            return s with { Status = OrderStatus.Cancelled };
+                        }).ToList();
 
-                    var memoryActiveCount = enrichedStops.Count(s => s.Status is OrderStatus.Dispatched or OrderStatus.InProgress);
-                    var memoryCompletedCount = enrichedStops.Count(s => s.Status == OrderStatus.Completed);
-                    var memoryCancelledCount = enrichedStops.Count(s => s.Status == OrderStatus.Cancelled);
+                        var memoryActiveCount = enrichedStops.Count(s => s.Status is OrderStatus.Dispatched or OrderStatus.InProgress);
+                        var memoryCompletedCount = enrichedStops.Count(s => s.Status == OrderStatus.Completed);
+                        var memoryCancelledCount = enrichedStops.Count(s => s.Status == OrderStatus.Cancelled);
 
-                    return memoryRoute with
-                    {
-                        Stops = enrichedStops,
-                        ActiveOrdersCount = memoryActiveCount,
-                        CompletedOrdersCount = memoryCompletedCount,
-                        CancelledOrdersCount = memoryCancelledCount
-                    };
+                        return memoryRoute with
+                        {
+                            Stops = enrichedStops,
+                            ActiveOrdersCount = memoryActiveCount,
+                            CompletedOrdersCount = memoryCompletedCount,
+                            CancelledOrdersCount = memoryCancelledCount
+                        };
+                    }
+
+                    return memoryRoute;
                 }
-
-                return memoryRoute;
             }
         }
 
@@ -426,6 +438,9 @@ public class WorkOrderService(
         }
 
         var durationMinutes = request.DurationMinutes;
+        if (durationMinutes <= 0)
+            throw new ArgumentException("Длительность обслуживания (DurationMinutes) должна быть строго больше нуля.");
+
         var windowStart = request.WindowStart ?? DateTimeOffset.UtcNow;
         var windowEnd = request.WindowEnd ?? windowStart.AddMinutes(durationMinutes);
 
@@ -595,10 +610,11 @@ public class WorkOrderService(
             return new OrderImportResultDto(0, 0, 0, warnings);
         }
 
-        // Общее число всех уникальных адресов для геокодинга по всем файлам
+        // Общее число всех уникальных адресов для геокодинга по всем файлам (включая заявки без координат или с фиктивными 0,0)
         var ordersNeedingGeo = parsedFiles
             .SelectMany(f => f.ParseData.Orders)
-            .Where(o => (o.Latitude == null || o.Longitude == null) && !string.IsNullOrWhiteSpace(o.Address))
+            .Where(o => (o.Latitude == null || o.Longitude == null || (Math.Abs(o.Latitude.Value) < 0.0001 && Math.Abs(o.Longitude.Value) < 0.0001)) 
+                     && !string.IsNullOrWhiteSpace(o.Address))
             .Select(o => (Address: o.Address, District: o.District))
             .Distinct()
             .ToList();
@@ -620,7 +636,12 @@ public class WorkOrderService(
             var validOrders = new List<WorkOrderInputDto>();
             foreach (var order in parseData.Orders)
             {
-                if (order.Latitude != null && order.Longitude != null)
+                bool hasValidCoords = order.Latitude.HasValue && order.Longitude.HasValue
+                    && order.Latitude is >= -90.0 and <= 90.0
+                    && order.Longitude is >= -180.0 and <= 180.0
+                    && (Math.Abs(order.Latitude.Value) > 0.0001 || Math.Abs(order.Longitude.Value) > 0.0001);
+
+                if (hasValidCoords)
                 {
                     validOrders.Add(order);
                     continue;

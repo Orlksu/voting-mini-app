@@ -57,14 +57,23 @@ public class EngineersController(IEngineerCsvParser csvParser, IEngineerService 
     }
 
     /// <summary>
-    /// Получение рассчитанного маршрута конкретного инженера с полилинией (EncodedPolyline)
+    /// Получение рассчитанного маршрута конкретного инженера с полилинией (EncodedPolyline).
+    /// Опционально фильтрует по целевой дате плана (date).
     /// </summary>
+    /// <param name="id">Идентификатор инженера (Guid или ExternalId).</param>
+    /// <param name="date">Опциональная дата плана для получения маршрута на конкретный день.</param>
+    /// <param name="workOrderService">Сервис работы с заявками и маршрутами.</param>
+    /// <param name="ct">Токен отмены запроса.</param>
     [HttpGet("{id}/route")]
     [ProducesResponseType<EngineerRouteDto>(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<IActionResult> GetEngineerRoute(string id, [FromServices] IWorkOrderService workOrderService, CancellationToken ct)
+    public async Task<IActionResult> GetEngineerRoute(
+        string id, 
+        [FromQuery] DateTimeOffset? date = null, 
+        [FromServices] IWorkOrderService workOrderService = null!, 
+        CancellationToken ct = default)
     {
-        var route = await workOrderService.GetRouteByEngineerAsync(id, ct);
+        var route = await workOrderService.GetRouteByEngineerAsync(id, date, ct);
         return route is null ? NotFound($"Маршрут для инженера '{id}' не найден.") : Ok(route);
     }
 }
