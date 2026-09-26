@@ -16,6 +16,7 @@ public class OptimizationJobStore
         public OptimizationResultDto? Result { get; set; }
     }
 
+    private const int MaxCapacity = 200;
     private readonly ConcurrentDictionary<Guid, Job> _jobs = new();
 
     public List<EngineerInputDto>? LastEngineers { get; private set; }
@@ -24,6 +25,20 @@ public class OptimizationJobStore
 
     public JobStatusResponseDto Create()
     {
+        if (_jobs.Count >= MaxCapacity)
+        {
+            var oldJobs = _jobs.Values
+                .Where(j => j.Status is JobStatus.Completed or JobStatus.Failed)
+                .OrderBy(j => j.CreatedAt)
+                .Take(_jobs.Count - MaxCapacity + 10)
+                .ToList();
+
+            foreach (var old in oldJobs)
+            {
+                _jobs.TryRemove(old.JobId, out _);
+            }
+        }
+
         var job = new Job { JobId = Guid.NewGuid(), CreatedAt = DateTimeOffset.UtcNow };
         _jobs[job.JobId] = job;
         return ToStatus(job);

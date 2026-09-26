@@ -39,19 +39,27 @@ public class OptimizationController : ControllerBase
 
     /// <summary>
     /// Постановка задачи в очередь расчета на реальных данных из БД:
-    /// все доступные инженеры и все нераспределённые заявки.
+    /// доступные инженеры и нераспределённые заявки (NotDispatched).
+    /// Опционально фильтрует по идентификатору депо (depotId), району (district) или дате (date).
     /// </summary>
+    /// <param name="depotId">Опциональный идентификатор депо (DepotId) для ограничения расчета.</param>
+    /// <param name="district">Опциональный район (District) для ограничения расчета.</param>
+    /// <param name="date">Опциональная целевая дата оптимизации (фильтрует заявки строго на эту дату в MSK).</param>
+    /// <param name="ct">Токен отмены запроса.</param>
     [HttpPost("jobs")]
     [ProducesResponseType<JobStatusResponseDto>(StatusCodes.Status202Accepted)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    public async Task<ActionResult<JobStatusResponseDto>> CreateJob(CancellationToken ct)
+    public async Task<ActionResult<JobStatusResponseDto>> CreateJob(
+        [FromQuery] Guid? depotId = null,
+        [FromQuery] string? district = null,
+        [FromQuery] DateTimeOffset? date = null,
+        CancellationToken ct = default)
     {
-        var engineers = (await _engineers.GetAllAsync(ct))
-            .Where(e => e.IsAvailable)
-            .Select(ToEngineerInputDto)
-            .ToList();
+        var engEntities = await _engineers.GetAvailableEngineersAsync(depotId, district, ct);
+        var engineers = engEntities.Select(ToEngineerInputDto).ToList();
 
-        var orders = (await _workOrders.GetAllAsync(ct))
+        var woEntities = await _workOrders.GetPendingOrdersForPlanningAsync(depotId, district, date, ct);
+        var orders = woEntities
             .Where(o => o.Status == OrderStatus.NotDispatched)
             .Select(ToWorkOrderInputDto)
             .ToList();
@@ -59,9 +67,11 @@ public class OptimizationController : ControllerBase
         if (engineers.Count == 0)
             return BadRequest("Нет доступных инженеров для оптимизации (проверьте /api/v1/engineers).");
         if (orders.Count == 0)
-            return BadRequest("Нет нераспределённых заявок (проверьте /api/v1/workorders).");
+            return BadRequest(date.HasValue
+                ? $"Нет нераспределённых заявок для оптимизации на дату {date.Value:yyyy-MM-dd}."
+                : "Нет нераспределённых заявок (проверьте /api/v1/workorders).");
 
-        var planDateUtc = orders.Select(o => o.WindowStart).FirstOrDefault(w => w.HasValue) ?? DateTimeOffset.UtcNow;
+        var planDateUtc = date ?? (orders.Select(o => o.WindowStart).FirstOrDefault(w => w.HasValue) ?? DateTimeOffset.UtcNow);
         var mskOffset = TimeSpan.FromHours(3);
         var planDateMsk = planDateUtc.ToOffset(mskOffset);
 
@@ -198,12 +208,12 @@ public class OptimizationController : ControllerBase
     [HttpPost("reschedule")]
     [ProducesResponseType<JobStatusResponseDto>(StatusCodes.Status202Accepted)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    public ActionResult<JobStatusResponseDto> Reschedule([FromBody] ReschedulePlanRequest request)
+    public async Task<ActionResult<JobStatusResponseDto>> Reschedule([FromBody] ReschedulePlanRequest request, CancellationToken ct = default)
     {
-        var planRequest = BuildPlanRequest(request);
+        var planRequest = await BuildPlanRequestAsync(request, ct);
         if (planRequest == null)
         {
-            return BadRequest("Перепланирование требует ранее рассчитанного плана (справочник инженеров).");
+            return BadRequest("Перепланирование требует доступных инженеров и активных заявок.");
         }
 
         var job = _jobStore.Create();
@@ -382,9 +392,21 @@ public class OptimizationController : ControllerBase
         });
     }
 
-    private CreateOptimizationPlanRequest? BuildPlanRequest(ReschedulePlanRequest request)
+    private async Task<CreateOptimizationPlanRequest?> BuildPlanRequestAsync(ReschedulePlanRequest request, CancellationToken ct)
     {
-        if (_jobStore.LastEngineers is not { Count: > 0 } engineers)
+        var engineers = _jobStore.LastEngineers;
+        if (engineers is null || engineers.Count == 0)
+        {
+            // Fallback на базу данных, если после перезапуска сервиса in-memory кэш пуст
+            var engEntities = await _engineers.GetAvailableEngineersAsync(ct: ct);
+            engineers = engEntities.Select(ToEngineerInputDto).ToList();
+            if (engineers.Count > 0)
+            {
+                _jobStore.SetLastEngineers(engineers);
+            }
+        }
+
+        if (engineers.Count == 0)
         {
             return null;
         }

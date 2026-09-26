@@ -57,18 +57,26 @@ public class EngineerRepository(AppDbContext db) : IEngineerRepository
         if (list.Count == 0)
             return;
 
-        var existing = await db.Engineers
-            .Where(e => list.Select(x => x.ExternalId).Contains(e.ExternalId))
-            .ToListAsync(ct);
-        var existingByExternalId = existing.ToDictionary(e => e.ExternalId);
+        var externalIds = list
+            .Select(x => x.ExternalId.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
 
-        var processed = new HashSet<string>();
+        var existing = await db.Engineers
+            .Where(e => externalIds.Contains(e.ExternalId))
+            .ToListAsync(ct);
+        var existingByExternalId = existing
+            .GroupBy(e => e.ExternalId.Trim(), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+
+        var processed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var engineer in list)
         {
-            if (!processed.Add(engineer.ExternalId))
+            var key = engineer.ExternalId.Trim();
+            if (!processed.Add(key))
                 continue;
 
-            if (existingByExternalId.TryGetValue(engineer.ExternalId, out var current))
+            if (existingByExternalId.TryGetValue(key, out var current))
             {
                 current.Name = engineer.Name;
                 current.District = engineer.District;

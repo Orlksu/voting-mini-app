@@ -208,12 +208,13 @@ public class MockRouteOptimizer : IRouteOptimizer
                 var c = bestCandidate;
                 var state = c.State;
 
+                var msk = TimeSpan.FromHours(3);
                 string windowInfo = order.WindowStart.HasValue && order.WindowEnd.HasValue
-                    ? $" (окно клиента {order.WindowStart.Value:HH:mm}-{order.WindowEnd.Value:HH:mm})"
+                    ? $" (окно клиента {order.WindowStart.Value.ToOffset(msk):HH:mm}-{order.WindowEnd.Value.ToOffset(msk):HH:mm})"
                     : string.Empty;
 
                 string reason = $"Назначен {state.Engineer.Name} ({state.Engineer.Transport}): навык '{order.RequiredSkill}' подтверждён, " +
-                                $"прибытие в {c.Arrival:HH:mm}{windowInfo}, окончание в {c.ServiceEnd:HH:mm} (смена до {state.Engineer.ShiftEnd:HH:mm})";
+                                $"прибытие в {c.Arrival.ToOffset(msk):HH:mm}{windowInfo}, окончание в {c.ServiceEnd.ToOffset(msk):HH:mm} (смена до {state.Engineer.ShiftEnd.ToOffset(msk):HH:mm})";
 
                 state.Stops.Add(new RouteStopDto(
                     Sequence: state.Stops.Count + 1,
@@ -251,7 +252,8 @@ public class MockRouteOptimizer : IRouteOptimizer
                 }
                 else if (anyWindowMissed)
                 {
-                    string deadlineText = order.WindowEnd.HasValue ? $" до {order.WindowEnd.Value:HH:mm}" : string.Empty;
+                    var msk = TimeSpan.FromHours(3);
+                    string deadlineText = order.WindowEnd.HasValue ? $" до {order.WindowEnd.Value.ToOffset(msk):HH:mm}" : string.Empty;
                     unassignedOrders.Add(new UnassignedOrderDto(
                         order.ExternalId,
                         order.Address,

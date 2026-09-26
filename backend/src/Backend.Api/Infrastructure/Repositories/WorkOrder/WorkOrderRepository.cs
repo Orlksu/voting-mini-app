@@ -25,17 +25,26 @@ public class WorkOrderRepository(AppDbContext db) : IWorkOrderRepository
         if (list.Count == 0)
             return;
 
-        var existing = await db.WorkOrders
-            .Where(w => list.Select(o => o.ExternalId).Contains(w.ExternalId))
-            .ToListAsync(ct);
-        var existingByKey = existing
-            .GroupBy(w => (w.ExternalId, w.District))
-            .ToDictionary(g => g.Key, g => g.First());
+        var externalIds = list
+            .Select(o => o.ExternalId.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
 
-        var processed = new HashSet<(string, string)>();
+        var existing = await db.WorkOrders
+            .Where(w => externalIds.Contains(w.ExternalId))
+            .ToListAsync(ct);
+
+        static string MakeKey(string extId, string district) =>
+            $"{extId.Trim()}|{district.Trim()}";
+
+        var existingByKey = existing
+            .GroupBy(w => MakeKey(w.ExternalId, w.District), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+
+        var processed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var order in list)
         {
-            var key = (order.ExternalId, order.District);
+            var key = MakeKey(order.ExternalId, order.District);
             if (!processed.Add(key))
                 continue;
 
@@ -192,7 +201,9 @@ public class WorkOrderRepository(AppDbContext db) : IWorkOrderRepository
         }
         else if (newStatus == OrderStatus.NotDispatched)
         {
-            query = query.Where(w => w.Status != OrderStatus.Cancelled && w.Status != OrderStatus.Completed);
+            query = query.Where(w => w.Status != OrderStatus.Cancelled 
+                                  && w.Status != OrderStatus.Completed 
+                                  && w.Status != OrderStatus.InProgress);
         }
 
         await query.ExecuteUpdateAsync(setters => setters.SetProperty(w => w.Status, newStatus), ct);
