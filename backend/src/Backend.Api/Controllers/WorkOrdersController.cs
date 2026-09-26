@@ -108,6 +108,7 @@ public class WorkOrdersController(
     /// Завершенные (Completed) заявки отменить нельзя (400 Bad Request).
     /// </summary>
     /// <param name="id">Уникальный идентификатор заявки (Guid или уникальный ExternalId).</param>
+    /// <param name="district">Опциональный район (District) для однозначной идентификации при отмене по ExternalId.</param>
     /// <param name="request">Тело запроса с опциональной причиной отмены.</param>
     /// <param name="ct">Токен отмены запроса.</param>
     /// <response code="200">Заявка успешно отменена.</response>
@@ -119,12 +120,13 @@ public class WorkOrdersController(
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> Cancel(
         string id, 
+        [FromQuery] string? district = null,
         [FromBody(EmptyBodyBehavior = EmptyBodyBehavior.Allow)] CancelWorkOrderRequest? request = null, 
         CancellationToken ct = default)
     {
         try
         {
-            var result = await workOrderService.CancelAsync(id, request?.Reason, ct);
+            var result = await workOrderService.CancelAsync(id, district, request?.Reason, ct);
             return Ok(result);
         }
         catch (KeyNotFoundException ex)
@@ -146,6 +148,7 @@ public class WorkOrdersController(
     /// Отмененные (Cancelled) заявки завершить нельзя (400 Bad Request).
     /// </summary>
     /// <param name="id">Уникальный идентификатор заявки (Guid или уникальный ExternalId).</param>
+    /// <param name="district">Опциональный район (District) для однозначной идентификации при завершении по ExternalId.</param>
     /// <param name="ct">Токен отмены запроса.</param>
     /// <response code="200">Заявка успешно переведена в статус завершенной.</response>
     /// <response code="400">Попытка завершить отмененную заявку или неоднозначный идентификатор.</response>
@@ -154,11 +157,14 @@ public class WorkOrdersController(
     [ProducesResponseType<WorkOrderDto>(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<IActionResult> Complete(string id, CancellationToken ct)
+    public async Task<IActionResult> Complete(
+        string id, 
+        [FromQuery] string? district = null, 
+        CancellationToken ct = default)
     {
         try
         {
-            var result = await workOrderService.CompleteAsync(id, ct);
+            var result = await workOrderService.CompleteAsync(id, district, ct);
             return Ok(result);
         }
         catch (KeyNotFoundException ex)

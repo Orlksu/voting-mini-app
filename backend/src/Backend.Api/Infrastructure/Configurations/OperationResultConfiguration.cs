@@ -12,6 +12,8 @@ public class OperationResultConfiguration : IEntityTypeConfiguration<OperationRe
 
         builder.Property(x => x.JobId);
         builder.Property(x => x.PlanDate);
+        builder.Property(x => x.CreatedAt).HasDefaultValueSql("NOW()").IsRequired();
+        builder.HasIndex(x => x.CreatedAt);
 
         builder.ComplexProperty(x => x.Metrics, m =>
         {

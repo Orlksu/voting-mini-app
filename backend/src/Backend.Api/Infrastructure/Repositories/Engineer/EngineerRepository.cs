@@ -25,6 +25,26 @@ public class EngineerRepository(AppDbContext db) : IEngineerRepository
             .Where(e => e.District == district && e.IsAvailable)
             .ToListAsync(ct);
 
+    public async Task<List<Engineer>> GetAvailableEngineersAsync(Guid? depotId = null, string? district = null, CancellationToken ct = default)
+    {
+        var query = db.Engineers
+            .AsNoTracking()
+            .Where(e => e.IsAvailable);
+
+        if (depotId.HasValue)
+        {
+            query = query.Where(e => e.DepotId == depotId.Value);
+        }
+
+        if (!string.IsNullOrWhiteSpace(district))
+        {
+            var trimmed = district.Trim();
+            query = query.Where(e => EF.Functions.ILike(e.District, trimmed));
+        }
+
+        return await query.ToListAsync(ct);
+    }
+
     public async Task AddAsync(Engineer engineer, CancellationToken ct = default)
     {
         await db.Engineers.AddAsync(engineer, ct);

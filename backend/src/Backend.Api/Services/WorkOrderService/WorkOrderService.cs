@@ -65,7 +65,9 @@ public class WorkOrderService(
                 .GroupBy(o => o.ExternalId, StringComparer.OrdinalIgnoreCase)
                 .ToDictionary(
                     g => g.Key, 
-                    g => g.FirstOrDefault(o => o.DepotId == engineer.DepotId) ?? g.First(), 
+                    g => g.FirstOrDefault(o => 
+                        (engineer.DepotId.HasValue && o.DepotId == engineer.DepotId) ||
+                        (!string.IsNullOrEmpty(engineer.District) && string.Equals(o.District, engineer.District, StringComparison.OrdinalIgnoreCase))) ?? g.First(), 
                     StringComparer.OrdinalIgnoreCase);
 
             var stops = route.Stops.OrderBy(s => s.Sequence).Select(s =>
@@ -132,7 +134,9 @@ public class WorkOrderService(
                         .GroupBy(o => o.ExternalId, StringComparer.OrdinalIgnoreCase)
                         .ToDictionary(
                             g => g.Key, 
-                            g => g.FirstOrDefault(o => o.DepotId == engineer.DepotId) ?? g.First(), 
+                            g => g.FirstOrDefault(o => 
+                        (engineer.DepotId.HasValue && o.DepotId == engineer.DepotId) ||
+                        (!string.IsNullOrEmpty(engineer.District) && string.Equals(o.District, engineer.District, StringComparison.OrdinalIgnoreCase))) ?? g.First(), 
                             StringComparer.OrdinalIgnoreCase);
 
                     var enrichedStops = memoryRoute.Stops.Select(s =>
@@ -237,7 +241,7 @@ public class WorkOrderService(
         return await workOrders.DeleteAsync(targetOrder, ct);
     }
 
-    public async Task<WorkOrderDto> CancelAsync(string identifier, string? reason = null, CancellationToken ct = default)
+    public async Task<WorkOrderDto> CancelAsync(string identifier, string? district = null, string? reason = null, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(identifier))
             throw new KeyNotFoundException("Идентификатор заявки не может быть пустым.");
@@ -245,7 +249,7 @@ public class WorkOrderService(
         if (reason != null && reason.Trim().Length > 500)
             throw new ArgumentException("Длина причины отмены (Reason) не должна превышать 500 символов.");
 
-        var matches = await workOrders.FindByIdentifierAsync(identifier, null, ct);
+        var matches = await workOrders.FindByIdentifierAsync(identifier, district, ct);
         if (matches.Count == 0)
             throw new KeyNotFoundException($"Заявка с идентификатором '{identifier.Trim()}' не найдена.");
 
@@ -254,7 +258,7 @@ public class WorkOrderService(
             var districts = string.Join(", ", matches.Select(o => $"'{o.District}'"));
             throw new InvalidOperationException(
                 $"Найдено несколько заявок ({matches.Count}) с номером '{identifier.Trim()}' в разных районах ({districts}). " +
-                $"Для отмены заявки укажите точный уникальный Id (Guid) заявки.");
+                $"Для отмены заявки укажите точный уникальный Id (Guid) заявки или передайте параметр district.");
         }
 
         var order = matches[0];
@@ -268,12 +272,12 @@ public class WorkOrderService(
         return ToDto(order);
     }
 
-    public async Task<WorkOrderDto> CompleteAsync(string identifier, CancellationToken ct = default)
+    public async Task<WorkOrderDto> CompleteAsync(string identifier, string? district = null, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(identifier))
             throw new KeyNotFoundException("Идентификатор заявки не может быть пустым.");
 
-        var matches = await workOrders.FindByIdentifierAsync(identifier, null, ct);
+        var matches = await workOrders.FindByIdentifierAsync(identifier, district, ct);
         if (matches.Count == 0)
             throw new KeyNotFoundException($"Заявка с идентификатором '{identifier.Trim()}' не найдена.");
 
@@ -282,7 +286,7 @@ public class WorkOrderService(
             var districts = string.Join(", ", matches.Select(o => $"'{o.District}'"));
             throw new InvalidOperationException(
                 $"Найдено несколько заявок ({matches.Count}) с номером '{identifier.Trim()}' в разных районах ({districts}). " +
-                $"Для завершения заявки укажите точный уникальный Id (Guid) заявки.");
+                $"Для завершения заявки укажите точный уникальный Id (Guid) заявки или передайте параметр district.");
         }
 
         var order = matches[0];

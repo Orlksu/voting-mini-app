@@ -151,6 +151,11 @@ namespace Backend.Api.Infrastructure.Migrations
                     b.Property<double?>("BaselineDistanceKm")
                         .HasColumnType("double precision");
 
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("NOW()");
+
                     b.Property<string>("EncodedPolyline")
                         .HasColumnType("text");
 
@@ -174,6 +179,8 @@ namespace Backend.Api.Infrastructure.Migrations
                         .HasColumnType("integer");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("CreatedAt");
 
                     b.HasIndex("EngineerId");
 
@@ -216,6 +223,11 @@ namespace Backend.Api.Infrastructure.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("NOW()");
+
                     b.Property<Guid>("JobId")
                         .HasColumnType("uuid");
 
@@ -255,6 +267,8 @@ namespace Backend.Api.Infrastructure.Migrations
                         });
 
                     b.HasKey("Id");
+
+                    b.HasIndex("CreatedAt");
 
                     b.ToTable("OperationResults");
                 });

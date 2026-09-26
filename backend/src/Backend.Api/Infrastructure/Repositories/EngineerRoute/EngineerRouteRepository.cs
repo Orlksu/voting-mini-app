@@ -10,6 +10,8 @@ public class EngineerRouteRepository(AppDbContext db) : IEngineerRouteRepository
                   join op in db.OperationResults.AsNoTracking() on r.OperationResultId equals op.Id into opGroup
                   from op in opGroup.DefaultIfEmpty()
                   where r.EngineerId == engineerId
-                  orderby op != null ? op.PlanDate : DateTimeOffset.MinValue descending
+                  orderby (op != null ? op.PlanDate : DateTimeOffset.MinValue) descending,
+                          (op != null ? op.CreatedAt : r.CreatedAt) descending,
+                          r.CreatedAt descending
                   select r).ToListAsync(ct);
 }

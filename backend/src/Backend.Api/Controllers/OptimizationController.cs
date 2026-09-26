@@ -61,7 +61,10 @@ public class OptimizationController : ControllerBase
         if (orders.Count == 0)
             return BadRequest("Нет нераспределённых заявок (проверьте /api/v1/workorders).");
 
-        var planDate = orders.Select(o => o.WindowStart).FirstOrDefault(w => w.HasValue) ?? DateTimeOffset.UtcNow;
+        var planDateUtc = orders.Select(o => o.WindowStart).FirstOrDefault(w => w.HasValue) ?? DateTimeOffset.UtcNow;
+        var mskOffset = TimeSpan.FromHours(3);
+        var planDateMsk = planDateUtc.ToOffset(mskOffset);
+
         var alignedEngineers = engineers.Select(e =>
         {
             var shiftDuration = e.ShiftEnd - e.ShiftStart;
@@ -70,18 +73,19 @@ public class OptimizationController : ControllerBase
                 shiftDuration += TimeSpan.FromDays(1);
             }
 
-            var alignedStart = new DateTimeOffset(planDate.Year, planDate.Month, planDate.Day,
-                e.ShiftStart.Hour, e.ShiftStart.Minute, e.ShiftStart.Second, e.ShiftStart.Offset);
-            var alignedEnd = alignedStart + shiftDuration;
-            if (alignedEnd <= alignedStart)
-            {
-                alignedEnd = alignedEnd.AddDays(1);
-            }
+            var shiftMskStart = e.ShiftStart.ToOffset(mskOffset);
+            var alignedStartMsk = new DateTimeOffset(
+                planDateMsk.Year, planDateMsk.Month, planDateMsk.Day,
+                shiftMskStart.Hour, shiftMskStart.Minute, shiftMskStart.Second,
+                mskOffset);
 
-            return e with { ShiftStart = alignedStart, ShiftEnd = alignedEnd };
+            var alignedStartUtc = alignedStartMsk.ToUniversalTime();
+            var alignedEndUtc = alignedStartUtc + shiftDuration;
+
+            return e with { ShiftStart = alignedStartUtc, ShiftEnd = alignedEndUtc };
         }).ToList();
 
-        var request = new CreateOptimizationPlanRequest(planDate, alignedEngineers, orders);
+        var request = new CreateOptimizationPlanRequest(planDateUtc, alignedEngineers, orders);
 
         _jobStore.SetLastEngineers(request.Engineers);
         var job = _jobStore.Create();
@@ -106,37 +110,20 @@ public class OptimizationController : ControllerBase
         [FromQuery] string? district = null,
         CancellationToken ct = default)
     {
-        var engQuery = (await _engineers.GetAllAsync(ct)).Where(e => e.IsAvailable);
-        if (depotId.HasValue)
-        {
-            engQuery = engQuery.Where(e => e.DepotId == depotId.Value);
-        }
-        if (!string.IsNullOrWhiteSpace(district))
-        {
-            engQuery = engQuery.Where(e => string.Equals(e.District, district.Trim(), StringComparison.OrdinalIgnoreCase));
-        }
-
-        var engineers = engQuery.Select(ToEngineerInputDto).ToList();
+        var engEntities = await _engineers.GetAvailableEngineersAsync(depotId, district, ct);
+        var engineers = engEntities.Select(ToEngineerInputDto).ToList();
         if (engineers.Count == 0)
             return BadRequest("Нет доступных инженеров для перепланирования.");
 
-        var woQuery = (await _workOrders.GetAllAsync(ct))
-            .Where(o => o.Status is OrderStatus.NotDispatched or OrderStatus.Dispatched);
-
-        if (depotId.HasValue)
-        {
-            woQuery = woQuery.Where(o => o.DepotId == depotId.Value);
-        }
-        if (!string.IsNullOrWhiteSpace(district))
-        {
-            woQuery = woQuery.Where(o => string.Equals(o.District, district.Trim(), StringComparison.OrdinalIgnoreCase));
-        }
-
-        var orders = woQuery.Select(ToWorkOrderInputDto).ToList();
+        var woEntities = await _workOrders.GetPendingOrdersForPlanningAsync(depotId, district, ct);
+        var orders = woEntities.Select(ToWorkOrderInputDto).ToList();
         if (orders.Count == 0)
             return BadRequest("Нет незавершенных заявок для перепланирования.");
 
-        var planDate = orders.Select(o => o.WindowStart).FirstOrDefault(w => w.HasValue) ?? DateTimeOffset.UtcNow;
+        var planDateUtc = orders.Select(o => o.WindowStart).FirstOrDefault(w => w.HasValue) ?? DateTimeOffset.UtcNow;
+        var mskOffset = TimeSpan.FromHours(3);
+        var planDateMsk = planDateUtc.ToOffset(mskOffset);
+
         var alignedEngineers = engineers.Select(e =>
         {
             var shiftDuration = e.ShiftEnd - e.ShiftStart;
@@ -145,18 +132,19 @@ public class OptimizationController : ControllerBase
                 shiftDuration += TimeSpan.FromDays(1);
             }
 
-            var alignedStart = new DateTimeOffset(planDate.Year, planDate.Month, planDate.Day,
-                e.ShiftStart.Hour, e.ShiftStart.Minute, e.ShiftStart.Second, e.ShiftStart.Offset);
-            var alignedEnd = alignedStart + shiftDuration;
-            if (alignedEnd <= alignedStart)
-            {
-                alignedEnd = alignedEnd.AddDays(1);
-            }
+            var shiftMskStart = e.ShiftStart.ToOffset(mskOffset);
+            var alignedStartMsk = new DateTimeOffset(
+                planDateMsk.Year, planDateMsk.Month, planDateMsk.Day,
+                shiftMskStart.Hour, shiftMskStart.Minute, shiftMskStart.Second,
+                mskOffset);
 
-            return e with { ShiftStart = alignedStart, ShiftEnd = alignedEnd };
+            var alignedStartUtc = alignedStartMsk.ToUniversalTime();
+            var alignedEndUtc = alignedStartUtc + shiftDuration;
+
+            return e with { ShiftStart = alignedStartUtc, ShiftEnd = alignedEndUtc };
         }).ToList();
 
-        var request = new CreateOptimizationPlanRequest(planDate, alignedEngineers, orders);
+        var request = new CreateOptimizationPlanRequest(planDateUtc, alignedEngineers, orders);
 
         _jobStore.SetLastEngineers(request.Engineers);
         var job = _jobStore.Create();
@@ -243,11 +231,13 @@ public class OptimizationController : ControllerBase
                         .GroupBy(e => e.ExternalId, StringComparer.OrdinalIgnoreCase)
                         .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
 
+                    var nowUtc = DateTimeOffset.UtcNow;
                     var operationResult = new OperationResult
                     {
                         Id = result.PlanId,
                         JobId = jobId,
                         PlanDate = result.PlanDate.ToUniversalTime(),
+                        CreatedAt = nowUtc,
                         Metrics = new PlanMetrics(
                             result.Metrics.TotalOrders,
                             result.Metrics.AssignedOrders,
@@ -270,6 +260,7 @@ public class OptimizationController : ControllerBase
                                 EngineerExternalId = r.EngineerExternalId,
                                 EngineerName = r.EngineerName,
                                 Transport = r.Transport,
+                                CreatedAt = nowUtc,
                                 BaselineDistanceKm = r.BaselineDistanceKm,
                                 EncodedPolyline = r.EncodedPolyline,
                                 Stops = r.Stops.Select(s => new RouteStop
@@ -311,26 +302,65 @@ public class OptimizationController : ControllerBase
                         .SelectMany(r => r.Stops)
                         .Select(s => s.ExternalOrderId)
                         .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+                    var assignedFromRequest = request.Orders
+                        .Where(o => assignedExternalIds.Contains(o.ExternalId))
                         .ToList();
 
-                    if (assignedExternalIds.Count > 0)
+                    var assignedIds = assignedFromRequest
+                        .Where(o => o.InternalId.HasValue)
+                        .Select(o => o.InternalId!.Value)
+                        .ToList();
+
+                    var missingAssigned = assignedFromRequest
+                        .Where(o => !o.InternalId.HasValue)
+                        .Select(o => (o.ExternalId, o.District))
+                        .ToList();
+
+                    if (missingAssigned.Count > 0)
                     {
-                        var ordersToUpdate = await woRepo.GetByExternalIdsAsync(assignedExternalIds, CancellationToken.None);
-                        await woRepo.UpdateStatusesAsync(ordersToUpdate.Select(o => o.Id), OrderStatus.Dispatched, CancellationToken.None);
+                        var fetched = await woRepo.GetByExternalIdsAndDistrictsAsync(missingAssigned, CancellationToken.None);
+                        assignedIds.AddRange(fetched.Select(f => f.Id));
+                    }
+
+                    if (assignedIds.Count > 0)
+                    {
+                        await woRepo.UpdateStatusesAsync(assignedIds.Distinct(), OrderStatus.Dispatched, CancellationToken.None);
                     }
 
                     var unassignedExternalIds = result.UnassignedOrders
                         .Select(u => u.ExternalOrderId)
                         .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+                    var unassignedFromRequest = request.Orders
+                        .Where(o => unassignedExternalIds.Contains(o.ExternalId))
                         .ToList();
-                    if (unassignedExternalIds.Count > 0)
+
+                    var unassignedIds = unassignedFromRequest
+                        .Where(o => o.InternalId.HasValue)
+                        .Select(o => o.InternalId!.Value)
+                        .ToList();
+
+                    var missingUnassigned = unassignedFromRequest
+                        .Where(o => !o.InternalId.HasValue)
+                        .Select(o => (o.ExternalId, o.District))
+                        .ToList();
+
+                    if (missingUnassigned.Count > 0)
                     {
-                        var unassignedOrders = await woRepo.GetByExternalIdsAsync(unassignedExternalIds, CancellationToken.None);
-                        await woRepo.UpdateStatusesAsync(unassignedOrders.Select(o => o.Id), OrderStatus.NotDispatched, CancellationToken.None);
+                        var fetched = await woRepo.GetByExternalIdsAndDistrictsAsync(missingUnassigned, CancellationToken.None);
+                        unassignedIds.AddRange(fetched.Select(f => f.Id));
+                    }
+
+                    if (unassignedIds.Count > 0)
+                    {
+                        await woRepo.UpdateStatusesAsync(unassignedIds.Distinct(), OrderStatus.NotDispatched, CancellationToken.None);
                     }
 
                     _logger.LogInformation("Job {JobId}: маршруты успешно сохранены в БД ({RoutesCount} маршрутов, {OrdersCount} назначенных заявок обновлены на Dispatched, {UnassignedCount} неназначенных заявок возвращены в NotDispatched)",
-                        jobId, operationResult.Routes.Count, assignedExternalIds.Count, unassignedExternalIds.Count);
+                        jobId, operationResult.Routes.Count, assignedIds.Count, unassignedIds.Count);
                 }
                 catch (Exception persistEx)
                 {
@@ -399,6 +429,7 @@ public class OptimizationController : ControllerBase
 
     private static WorkOrderInputDto ToWorkOrderInputDto(WorkOrder o) => new()
     {
+        InternalId = o.Id,
         ExternalId = o.ExternalId,
         District = o.District,
         Depot = new DepotDto(o.District, o.Location?.RawAddress ?? string.Empty,

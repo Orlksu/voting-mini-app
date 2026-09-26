@@ -10,6 +10,7 @@ public class EngineerRoute
     public string EngineerExternalId { get; set; } = string.Empty;
     public string EngineerName { get; set; } = string.Empty;
     public TransportType Transport { get; set; }
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public List<RouteStop> Stops { get; set; } = [];
 
     public double TotalDistanceKm => Stops.Sum(s => s.DistanceFromPreviousKm);

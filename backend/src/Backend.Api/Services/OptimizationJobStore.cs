@@ -96,7 +96,18 @@ public class OptimizationJobStore
                         ? s with { Status = newStatus }
                         : s
                 ).ToList();
-                return r with { Stops = updatedStops };
+
+                var activeCount = updatedStops.Count(s => s.Status is OrderStatus.Dispatched or OrderStatus.InProgress);
+                var completedCount = updatedStops.Count(s => s.Status == OrderStatus.Completed);
+                var cancelledCount = updatedStops.Count(s => s.Status == OrderStatus.Cancelled);
+
+                return r with
+                {
+                    Stops = updatedStops,
+                    ActiveOrdersCount = activeCount,
+                    CompletedOrdersCount = completedCount,
+                    CancelledOrdersCount = cancelledCount
+                };
             }).ToList();
 
             _lastResult = _lastResult with { Routes = modifiedRoutes };
@@ -111,11 +122,20 @@ public class OptimizationJobStore
                     if (!r.Stops.Any(s => string.Equals(s.ExternalOrderId, externalOrderId, StringComparison.OrdinalIgnoreCase)))
                         return r;
 
+                    var updatedStops = r.Stops.Select(s => string.Equals(s.ExternalOrderId, externalOrderId, StringComparison.OrdinalIgnoreCase)
+                        ? s with { Status = newStatus }
+                        : s).ToList();
+
+                    var activeCount = updatedStops.Count(s => s.Status is OrderStatus.Dispatched or OrderStatus.InProgress);
+                    var completedCount = updatedStops.Count(s => s.Status == OrderStatus.Completed);
+                    var cancelledCount = updatedStops.Count(s => s.Status == OrderStatus.Cancelled);
+
                     return r with
                     {
-                        Stops = r.Stops.Select(s => string.Equals(s.ExternalOrderId, externalOrderId, StringComparison.OrdinalIgnoreCase)
-                            ? s with { Status = newStatus }
-                            : s).ToList()
+                        Stops = updatedStops,
+                        ActiveOrdersCount = activeCount,
+                        CompletedOrdersCount = completedCount,
+                        CancelledOrdersCount = cancelledCount
                     };
                 }).ToList();
 

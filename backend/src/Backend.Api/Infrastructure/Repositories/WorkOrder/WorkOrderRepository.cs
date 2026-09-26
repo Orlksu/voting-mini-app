@@ -106,6 +106,53 @@ public class WorkOrderRepository(AppDbContext db) : IWorkOrderRepository
             .ToListAsync(ct);
     }
 
+    public async Task<List<WorkOrder>> GetByExternalIdsAndDistrictsAsync(IEnumerable<(string ExternalId, string? District)> orders, CancellationToken ct = default)
+    {
+        var list = orders.ToList();
+        if (list.Count == 0)
+            return [];
+
+        var extIds = list.Select(o => o.ExternalId).Distinct().ToList();
+        var candidates = await db.WorkOrders
+            .AsNoTracking()
+            .Where(w => extIds.Contains(w.ExternalId))
+            .ToListAsync(ct);
+
+        var result = new List<WorkOrder>();
+        foreach (var (extId, district) in list)
+        {
+            var match = candidates.FirstOrDefault(w =>
+                string.Equals(w.ExternalId, extId, StringComparison.OrdinalIgnoreCase) &&
+                (string.IsNullOrWhiteSpace(district) || string.Equals(w.District, district.Trim(), StringComparison.OrdinalIgnoreCase)));
+            if (match != null && !result.Any(r => r.Id == match.Id))
+            {
+                result.Add(match);
+            }
+        }
+        return result;
+    }
+
+    public async Task<List<WorkOrder>> GetPendingOrdersForPlanningAsync(Guid? depotId = null, string? district = null, CancellationToken ct = default)
+    {
+        var query = db.WorkOrders
+            .AsNoTracking()
+            .Include(w => w.Depot)
+            .Where(w => w.Status == OrderStatus.NotDispatched || w.Status == OrderStatus.Dispatched);
+
+        if (depotId.HasValue)
+        {
+            query = query.Where(w => w.DepotId == depotId.Value);
+        }
+
+        if (!string.IsNullOrWhiteSpace(district))
+        {
+            var trimmed = district.Trim();
+            query = query.Where(w => EF.Functions.ILike(w.District, trimmed));
+        }
+
+        return await query.ToListAsync(ct);
+    }
+
     public async Task<List<WorkOrder>> GetNotDispatchedByDepotIdAsync(Guid depotId, CancellationToken ct = default)
         => await db.WorkOrders
             .AsNoTracking()

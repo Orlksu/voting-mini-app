@@ -6,6 +6,7 @@ namespace Backend.Contracts.Requests;
 
 public record WorkOrderInputDto
 {
+    public Guid? InternalId { get; set; }
     public string ExternalId { get; set; } = string.Empty;
     public string? District { get; set; }
     public DepotDto? Depot { get; set; }
