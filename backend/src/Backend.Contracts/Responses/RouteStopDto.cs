@@ -16,5 +16,6 @@ public record RouteStopDto(
     string TaskType,
     OrderPriority Priority,
     string AssignmentReason,
-    OrderStatus Status = OrderStatus.Dispatched
+    OrderStatus Status = OrderStatus.Dispatched,
+    Guid? OrderId = null
 );

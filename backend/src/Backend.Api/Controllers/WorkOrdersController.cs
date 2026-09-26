@@ -38,7 +38,7 @@ public class WorkOrdersController(
         try
         {
             var created = await workOrderService.CreateAsync(request, ct);
-            return CreatedAtAction(nameof(GetByIdentifier), new { identifier = created.Id }, created);
+            return CreatedAtAction(nameof(GetByIdentifier), new { id = created.Id }, created);
         }
         catch (ArgumentException ex)
         {
@@ -53,21 +53,21 @@ public class WorkOrdersController(
     /// <summary>
     /// Получение информации о конкретной заявке по Id (Guid) или внешнему номеру (ExternalId).
     /// </summary>
-    /// <param name="identifier">Внутренний Guid заявки или строковый ExternalId.</param>
+    /// <param name="id">Внутренний Guid заявки или строковый ExternalId.</param>
     /// <param name="district">Опциональный район (District) для однозначной идентификации при поиске по ExternalId.</param>
     /// <param name="ct">Токен отмены запроса.</param>
     /// <response code="200">Информация о заявке найдена.</response>
     /// <response code="400">Найдено несколько заявок с таким ExternalId в разных районах (требуется указать district).</response>
     /// <response code="404">Заявка не найдена.</response>
-    [HttpGet("{identifier}")]
+    [HttpGet("{id}")]
     [ProducesResponseType<WorkOrderDto>(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<IActionResult> GetByIdentifier(string identifier, [FromQuery] string? district, CancellationToken ct)
+    public async Task<IActionResult> GetByIdentifier(string id, [FromQuery] string? district, CancellationToken ct)
     {
         try
         {
-            var order = await workOrderService.GetByIdentifierAsync(identifier, district, ct);
+            var order = await workOrderService.GetByIdentifierAsync(id, district, ct);
             return order is null ? NotFound("Заявка не найдена.") : Ok(order);
         }
         catch (InvalidOperationException ex)
@@ -80,21 +80,21 @@ public class WorkOrdersController(
     /// Удаление заявки по Id (Guid) или внешнему номеру (ExternalId).
     /// Разрешено удалять только нераспределенные заявки (NotDispatched).
     /// </summary>
-    /// <param name="identifier">Внутренний Guid заявки или строковый ExternalId.</param>
+    /// <param name="id">Внутренний Guid заявки или строковый ExternalId.</param>
     /// <param name="district">Опциональный район (District) для точной идентификации при удалении по ExternalId.</param>
     /// <param name="ct">Токен отмены запроса.</param>
     /// <response code="204">Заявка успешно удалена.</response>
     /// <response code="400">Нельзя удалить распределенную заявку или найдено несколько заявок с таким ExternalId.</response>
     /// <response code="404">Заявка не найдена.</response>
-    [HttpDelete("{identifier}")]
+    [HttpDelete("{id}")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<IActionResult> Delete(string identifier, [FromQuery] string? district, CancellationToken ct)
+    public async Task<IActionResult> Delete(string id, [FromQuery] string? district, CancellationToken ct)
     {
         try
         {
-            var deleted = await workOrderService.DeleteByIdentifierAsync(identifier, district, ct);
+            var deleted = await workOrderService.DeleteByIdentifierAsync(id, district, ct);
             return deleted ? NoContent() : NotFound("Заявка не найдена.");
         }
         catch (InvalidOperationException ex)

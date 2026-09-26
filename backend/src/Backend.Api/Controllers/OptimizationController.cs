@@ -94,6 +94,81 @@ public class OptimizationController : ControllerBase
     }
 
     /// <summary>
+    /// Оперативное перепланирование в один клик на основе текущего состояния БД:
+    /// берет всех доступных инженеров и все актуальные незавершенные заявки (NotDispatched и Dispatched), исключая Cancelled и Completed.
+    /// Опционально фильтрует по идентификатору депо (depotId) или району (district).
+    /// </summary>
+    [HttpPost("replan")]
+    [ProducesResponseType<JobStatusResponseDto>(StatusCodes.Status202Accepted)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<ActionResult<JobStatusResponseDto>> Replan(
+        [FromQuery] Guid? depotId = null,
+        [FromQuery] string? district = null,
+        CancellationToken ct = default)
+    {
+        var engQuery = (await _engineers.GetAllAsync(ct)).Where(e => e.IsAvailable);
+        if (depotId.HasValue)
+        {
+            engQuery = engQuery.Where(e => e.DepotId == depotId.Value);
+        }
+        if (!string.IsNullOrWhiteSpace(district))
+        {
+            engQuery = engQuery.Where(e => string.Equals(e.District, district.Trim(), StringComparison.OrdinalIgnoreCase));
+        }
+
+        var engineers = engQuery.Select(ToEngineerInputDto).ToList();
+        if (engineers.Count == 0)
+            return BadRequest("Нет доступных инженеров для перепланирования.");
+
+        var woQuery = (await _workOrders.GetAllAsync(ct))
+            .Where(o => o.Status is OrderStatus.NotDispatched or OrderStatus.Dispatched);
+
+        if (depotId.HasValue)
+        {
+            woQuery = woQuery.Where(o => o.DepotId == depotId.Value);
+        }
+        if (!string.IsNullOrWhiteSpace(district))
+        {
+            woQuery = woQuery.Where(o => string.Equals(o.District, district.Trim(), StringComparison.OrdinalIgnoreCase));
+        }
+
+        var orders = woQuery.Select(ToWorkOrderInputDto).ToList();
+        if (orders.Count == 0)
+            return BadRequest("Нет незавершенных заявок для перепланирования.");
+
+        var planDate = orders.Select(o => o.WindowStart).FirstOrDefault(w => w.HasValue) ?? DateTimeOffset.UtcNow;
+        var alignedEngineers = engineers.Select(e =>
+        {
+            var shiftDuration = e.ShiftEnd - e.ShiftStart;
+            if (shiftDuration <= TimeSpan.Zero)
+            {
+                shiftDuration += TimeSpan.FromDays(1);
+            }
+
+            var alignedStart = new DateTimeOffset(planDate.Year, planDate.Month, planDate.Day,
+                e.ShiftStart.Hour, e.ShiftStart.Minute, e.ShiftStart.Second, e.ShiftStart.Offset);
+            var alignedEnd = alignedStart + shiftDuration;
+            if (alignedEnd <= alignedStart)
+            {
+                alignedEnd = alignedEnd.AddDays(1);
+            }
+
+            return e with { ShiftStart = alignedStart, ShiftEnd = alignedEnd };
+        }).ToList();
+
+        var request = new CreateOptimizationPlanRequest(planDate, alignedEngineers, orders);
+
+        _jobStore.SetLastEngineers(request.Engineers);
+        var job = _jobStore.Create();
+        _logger.LogInformation("Job {JobId}: оперативное перепланирование на {PlanDate} ({Engineers} инженеров, {Orders} заявок)",
+            job.JobId, request.PlanDate, request.Engineers.Count, request.Orders.Count);
+
+        RunJob(job.JobId, request);
+
+        return AcceptedAtAction(nameof(GetJobStatus), new { jobId = job.JobId }, job);
+    }
+
+    /// <summary>
     /// Проверка статуса задачи (polling)
     /// </summary>
     [HttpGet("jobs/{jobId:guid}")]
@@ -244,8 +319,18 @@ public class OptimizationController : ControllerBase
                         await woRepo.UpdateStatusesAsync(ordersToUpdate.Select(o => o.Id), OrderStatus.Dispatched, CancellationToken.None);
                     }
 
-                    _logger.LogInformation("Job {JobId}: маршруты успешно сохранены в БД ({RoutesCount} маршрутов, {OrdersCount} назначенных заявок обновлены на Dispatched)",
-                        jobId, operationResult.Routes.Count, assignedExternalIds.Count);
+                    var unassignedExternalIds = result.UnassignedOrders
+                        .Select(u => u.ExternalOrderId)
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToList();
+                    if (unassignedExternalIds.Count > 0)
+                    {
+                        var unassignedOrders = await woRepo.GetByExternalIdsAsync(unassignedExternalIds, CancellationToken.None);
+                        await woRepo.UpdateStatusesAsync(unassignedOrders.Select(o => o.Id), OrderStatus.NotDispatched, CancellationToken.None);
+                    }
+
+                    _logger.LogInformation("Job {JobId}: маршруты успешно сохранены в БД ({RoutesCount} маршрутов, {OrdersCount} назначенных заявок обновлены на Dispatched, {UnassignedCount} неназначенных заявок возвращены в NotDispatched)",
+                        jobId, operationResult.Routes.Count, assignedExternalIds.Count, unassignedExternalIds.Count);
                 }
                 catch (Exception persistEx)
                 {

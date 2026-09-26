@@ -130,6 +130,10 @@ public class WorkOrderRepository(AppDbContext db) : IWorkOrderRepository
         {
             query = query.Where(w => w.Status == OrderStatus.NotDispatched);
         }
+        else if (newStatus == OrderStatus.NotDispatched)
+        {
+            query = query.Where(w => w.Status != OrderStatus.Cancelled && w.Status != OrderStatus.Completed);
+        }
 
         await query.ExecuteUpdateAsync(setters => setters.SetProperty(w => w.Status, newStatus), ct);
     }

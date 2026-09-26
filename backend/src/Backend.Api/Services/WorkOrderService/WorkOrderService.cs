@@ -85,15 +85,23 @@ public class WorkOrderService(
                     wo?.TaskType ?? string.Empty,
                     wo?.Priority ?? OrderPriority.Normal,
                     s.AssignmentReason,
-                    wo?.Status ?? OrderStatus.Cancelled
+                    wo?.Status ?? OrderStatus.Cancelled,
+                    wo?.Id
                 );
             }).ToList();
+
+            var activeCount = stops.Count(s => s.Status is OrderStatus.Dispatched or OrderStatus.InProgress);
+            var completedCount = stops.Count(s => s.Status == OrderStatus.Completed);
+            var cancelledCount = stops.Count(s => s.Status == OrderStatus.Cancelled);
 
             return new EngineerRouteDto(
                 route.EngineerExternalId,
                 route.EngineerName,
                 route.Transport,
                 route.Stops.Count,
+                activeCount,
+                completedCount,
+                cancelledCount,
                 Math.Round(route.TotalDistanceKm, 2),
                 Math.Round(route.BaselineDistanceKm ?? (route.TotalDistanceKm * 1.25), 2),
                 (int)route.TotalTravelTime.TotalMinutes,
@@ -135,13 +143,24 @@ public class WorkOrderService(
                             {
                                 Status = wo.Status,
                                 TaskType = string.IsNullOrEmpty(s.TaskType) ? wo.TaskType : s.TaskType,
-                                Priority = wo.Priority
+                                Priority = wo.Priority,
+                                OrderId = wo.Id
                             };
                         }
                         return s with { Status = OrderStatus.Cancelled };
                     }).ToList();
 
-                    return memoryRoute with { Stops = enrichedStops };
+                    var memoryActiveCount = enrichedStops.Count(s => s.Status is OrderStatus.Dispatched or OrderStatus.InProgress);
+                    var memoryCompletedCount = enrichedStops.Count(s => s.Status == OrderStatus.Completed);
+                    var memoryCancelledCount = enrichedStops.Count(s => s.Status == OrderStatus.Cancelled);
+
+                    return memoryRoute with
+                    {
+                        Stops = enrichedStops,
+                        ActiveOrdersCount = memoryActiveCount,
+                        CompletedOrdersCount = memoryCompletedCount,
+                        CancelledOrdersCount = memoryCancelledCount
+                    };
                 }
 
                 return memoryRoute;
@@ -153,6 +172,9 @@ public class WorkOrderService(
             engineer.ExternalId,
             engineer.Name,
             engineer.Transport,
+            0,
+            0,
+            0,
             0,
             0.0,
             0.0,
