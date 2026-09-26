@@ -8,8 +8,15 @@ public class WorkOrderRepository(AppDbContext db) : IWorkOrderRepository
 {
     public async Task AddAsync(WorkOrder order, CancellationToken ct = default)
     {
-        await db.WorkOrders.AddAsync(order, ct);
-        await db.SaveChangesAsync(ct);
+        try
+        {
+            await db.WorkOrders.AddAsync(order, ct);
+            await db.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateException)
+        {
+            throw new InvalidOperationException($"Заявка с таким идентификатором '{order.ExternalId}' в районе '{order.District}' уже существует.");
+        }
     }
 
     public async Task AddRangeAsync(IEnumerable<WorkOrder> orders, CancellationToken ct = default)
@@ -64,37 +71,27 @@ public class WorkOrderRepository(AppDbContext db) : IWorkOrderRepository
     public async Task<WorkOrder?> GetByExternalIdAndDistrictAsync(string externalId, string district, CancellationToken ct = default)
         => await db.WorkOrders.AsNoTracking().FirstOrDefaultAsync(w => w.ExternalId == externalId && w.District == district, ct);
 
-    public async Task<WorkOrder?> GetByIdentifierAsync(string identifier, string? district = null, CancellationToken ct = default)
+    public async Task<List<WorkOrder>> FindByIdentifierAsync(string identifier, string? district = null, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(identifier))
-            return null;
+            return [];
 
         var trimmed = identifier.Trim();
         if (Guid.TryParse(trimmed, out var guid))
         {
-            var byId = await db.WorkOrders.AsNoTracking().FirstOrDefaultAsync(w => w.Id == guid, ct);
+            var byId = await db.WorkOrders.FirstOrDefaultAsync(w => w.Id == guid, ct);
             if (byId != null)
-                return byId;
+                return [byId];
         }
 
-        var query = db.WorkOrders.AsNoTracking().Where(w => w.ExternalId == trimmed);
+        var query = db.WorkOrders.Where(w => w.ExternalId == trimmed);
         if (!string.IsNullOrWhiteSpace(district))
         {
             var trimmedDistrict = district.Trim();
             query = query.Where(w => w.District == trimmedDistrict);
-            return await query.FirstOrDefaultAsync(ct);
         }
 
-        var matching = await query.ToListAsync(ct);
-        if (matching.Count > 1)
-        {
-            var districts = string.Join(", ", matching.Select(o => $"'{o.District}'"));
-            throw new InvalidOperationException(
-                $"Найдено несколько заявок ({matching.Count}) с номером '{trimmed}' в разных районах ({districts}). " +
-                $"Укажите параметр запроса 'district' или точный уникальный Id (Guid) заявки.");
-        }
-
-        return matching.FirstOrDefault();
+        return await query.ToListAsync(ct);
     }
 
     public async Task<List<WorkOrder>> GetByExternalIdsAsync(IEnumerable<string> externalIds, CancellationToken ct = default)
@@ -129,55 +126,17 @@ public class WorkOrderRepository(AppDbContext db) : IWorkOrderRepository
             .ExecuteUpdateAsync(setters => setters.SetProperty(w => w.Status, newStatus), ct);
     }
 
-    public async Task<bool> DeleteByIdentifierAsync(string identifier, string? district = null, CancellationToken ct = default)
+    public async Task<bool> DeleteAsync(WorkOrder order, CancellationToken ct = default)
     {
-        if (string.IsNullOrWhiteSpace(identifier))
+        try
+        {
+            db.WorkOrders.Remove(order);
+            await db.SaveChangesAsync(ct);
+            return true;
+        }
+        catch (DbUpdateConcurrencyException)
+        {
             return false;
-
-        var trimmed = identifier.Trim();
-        WorkOrder? targetOrder = null;
-
-        if (Guid.TryParse(trimmed, out var guid))
-        {
-            targetOrder = await db.WorkOrders.FirstOrDefaultAsync(w => w.Id == guid, ct);
         }
-
-        if (targetOrder is null)
-        {
-            var query = db.WorkOrders.Where(w => w.ExternalId == trimmed);
-            if (!string.IsNullOrWhiteSpace(district))
-            {
-                var trimmedDistrict = district.Trim();
-                query = query.Where(w => w.District == trimmedDistrict);
-            }
-
-            var matching = await query.ToListAsync(ct);
-            if (matching.Count > 1)
-            {
-                var districts = string.Join(", ", matching.Select(o => $"'{o.District}'"));
-                throw new InvalidOperationException(
-                    $"Найдено несколько заявок ({matching.Count}) с номером '{trimmed}' в разных районах ({districts}). " +
-                    $"Для безопасного удаления укажите район (параметр 'district') или точный уникальный Id (Guid) заявки.");
-            }
-
-            if (matching.Count == 1)
-            {
-                targetOrder = matching[0];
-            }
-        }
-
-        if (targetOrder is null)
-            return false;
-
-        if (targetOrder.Status is OrderStatus.Dispatched or OrderStatus.InProgress or OrderStatus.Completed)
-        {
-            throw new InvalidOperationException(
-                $"Нельзя удалить заявку '{targetOrder.ExternalId}' со статусом '{targetOrder.Status}'. " +
-                $"Удаление разрешено только для нераспределенных (NotDispatched) или отмененных заявок.");
-        }
-
-        db.WorkOrders.Remove(targetOrder);
-        await db.SaveChangesAsync(ct);
-        return true;
     }
 }

@@ -127,8 +127,16 @@ public class WorkOrderService(
         if (string.IsNullOrWhiteSpace(identifier))
             return null;
 
-        var order = await workOrders.GetByIdentifierAsync(identifier, district, ct);
-        return order is null ? null : ToDto(order);
+        var matches = await workOrders.FindByIdentifierAsync(identifier, district, ct);
+        if (matches.Count > 1)
+        {
+            var districts = string.Join(", ", matches.Select(o => $"'{o.District}'"));
+            throw new InvalidOperationException(
+                $"Найдено несколько заявок ({matches.Count}) с номером '{identifier.Trim()}' в разных районах ({districts}). " +
+                $"Укажите параметр запроса 'district' или точный уникальный Id (Guid) заявки.");
+        }
+
+        return matches.Count == 1 ? ToDto(matches[0]) : null;
     }
 
     public async Task<bool> DeleteByIdentifierAsync(string identifier, string? district = null, CancellationToken ct = default)
@@ -136,7 +144,27 @@ public class WorkOrderService(
         if (string.IsNullOrWhiteSpace(identifier))
             return false;
 
-        return await workOrders.DeleteByIdentifierAsync(identifier, district, ct);
+        var matches = await workOrders.FindByIdentifierAsync(identifier, district, ct);
+        if (matches.Count > 1)
+        {
+            var districts = string.Join(", ", matches.Select(o => $"'{o.District}'"));
+            throw new InvalidOperationException(
+                $"Найдено несколько заявок ({matches.Count}) с номером '{identifier.Trim()}' в разных районах ({districts}). " +
+                $"Для безопасного удаления укажите район (параметр 'district') или точный уникальный Id (Guid) заявки.");
+        }
+
+        if (matches.Count == 0)
+            return false;
+
+        var targetOrder = matches[0];
+        if (!targetOrder.CanBeDeleted())
+        {
+            throw new InvalidOperationException(
+                $"Нельзя удалить заявку '{targetOrder.ExternalId}' со статусом '{targetOrder.Status}'. " +
+                $"Удаление разрешено только для нераспределенных (NotDispatched) или отмененных заявок.");
+        }
+
+        return await workOrders.DeleteAsync(targetOrder, ct);
     }
 
     public async Task<WorkOrderDto> CreateAsync(CreateWorkOrderRequest request, CancellationToken ct = default)
@@ -245,7 +273,8 @@ public class WorkOrderService(
 
             if (depotsWithCoords.Count > 0)
             {
-                var nearest = depotsWithCoords.MinBy(d => CalculateHaversineDistanceKm(lat, lon, d.Location!.Coordinates.Latitude, d.Location!.Coordinates.Longitude))!;
+                var orderCoord = new GeoCoordinate(lat, lon);
+                var nearest = depotsWithCoords.MinBy(d => orderCoord.DistanceToKm(d.Location!.Coordinates))!;
                 finalDepotId = nearest.Id;
                 finalDistrict = nearest.District;
             }
@@ -304,19 +333,6 @@ public class WorkOrderService(
         return ToDto(entity);
     }
 
-    private static double CalculateHaversineDistanceKm(double lat1, double lon1, double lat2, double lon2)
-    {
-        const double R = 6371.0;
-        var dLat = (lat2 - lat1) * Math.PI / 180.0;
-        var dLon = (lon2 - lon1) * Math.PI / 180.0;
-
-        var a = Math.Sin(dLat / 2) * Math.Sin(dLat / 2) +
-                Math.Cos(lat1 * Math.PI / 180.0) * Math.Cos(lat2 * Math.PI / 180.0) *
-                Math.Sin(dLon / 2) * Math.Sin(dLon / 2);
-
-        var c = 2 * Math.Atan2(Math.Sqrt(a), Math.Sqrt(1 - a));
-        return R * c;
-    }
 
     private static WorkOrderDto ToDto(WorkOrder o) => new(
         o.Id,

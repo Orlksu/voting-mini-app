@@ -3,6 +3,7 @@ using Backend.Api.Infrastructure.Repositories;
 using Backend.Api.Services;
 using Backend.Api.Services.Common;
 using Backend.Api.Services.CsvParserService;
+using Backend.Api.Services.DepotService;
 using Backend.Api.Services.EngineerService;
 using Backend.Api.Services.GeoCodingService;
 using Backend.Api.Services.WorkOrderService;
@@ -59,6 +60,7 @@ builder.Services.AddScoped<IEngineerRepository, EngineerRepository>();
 builder.Services.AddScoped<IEngineerRouteRepository, EngineerRouteRepository>();
 builder.Services.AddScoped<IOperationResultRepository, OperationResultRepository>();
 builder.Services.AddScoped<IWorkOrderService, WorkOrderService>();
+builder.Services.AddScoped<IDepotService, DepotService>();
 builder.Services.AddScoped<IEngineerService, EngineerService>();
 builder.Services.AddScoped<IGeocodeCacheRepository, GeocodeCacheRepository>();
 builder.Services.AddHttpClient<IGeocoder, GeocoderService>((sp, client) =>

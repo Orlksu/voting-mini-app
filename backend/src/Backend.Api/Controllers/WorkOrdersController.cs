@@ -4,7 +4,6 @@ using Backend.Api.Services.WorkOrderService;
 using Backend.Contracts.Requests;
 using Backend.Contracts.Responses;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
 
 namespace Backend.Api.Controllers;
 
@@ -47,12 +46,6 @@ public class WorkOrdersController(
         catch (InvalidOperationException ex)
         {
             return Conflict(ex.Message);
-        }
-        catch (DbUpdateException ex)
-        {
-            logger.LogWarning(ex, "Конфликт уникальности при сохранении заявки {ExternalId} в районе {District}",
-                request.ExternalId, request.District);
-            return Conflict("Заявка с таким идентификатором в указанном районе уже существует.");
         }
     }
 
@@ -106,10 +99,6 @@ public class WorkOrdersController(
         catch (InvalidOperationException ex)
         {
             return BadRequest(ex.Message);
-        }
-        catch (DbUpdateConcurrencyException)
-        {
-            return NotFound("Заявка уже была удалена или изменена другой операцией.");
         }
     }
 
