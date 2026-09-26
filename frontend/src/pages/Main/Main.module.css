@@ -31,7 +31,10 @@
 
 .contentLayer {
   min-height: 0;
-  padding: 20px 30px;
+  height: 100%;
+  padding: 20px 30px 40px;
+  box-sizing: border-box;
+  overflow: hidden;
   pointer-events: none;
 }
 

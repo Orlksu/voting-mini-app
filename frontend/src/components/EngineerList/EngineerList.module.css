@@ -2,11 +2,53 @@
   display: inline-flex;
   flex-direction: column;
   gap: 10px;
-  width: fit-content;
-  max-width: 350px;
+  width: min(350px, calc(100vw - 60px));
+  height: 100%;
+  max-height: 100%;
+  min-height: 0;
   padding: 20px;
 
   background-color: rgb(var(--color-ink) / 0.8);
+  border-radius: 30px;
+  box-sizing: border-box;
+}
+
+.listScrollArea {
+  min-height: 0;
+  flex: 1;
+}
+
+.listScrollViewport {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  box-sizing: border-box;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
+  scrollbar-color: #eabe5f transparent;
+  scrollbar-width: auto;
+}
+
+.listScrollViewport::-webkit-scrollbar {
+  width: 18px;
+}
+
+.listScrollViewport::-webkit-scrollbar-track {
+  background: transparent;
+  border: 1px solid rgb(234 190 95 / 85%);
+  border-radius: 30px;
+  margin: 15px 0;
+  box-sizing: border-box;
+}
+
+.listScrollViewport::-webkit-scrollbar-thumb {
+  background: #eabe5f;
+  background-clip: padding-box;
+  border: 5px solid transparent;
   border-radius: 30px;
 }
 

@@ -5,9 +5,17 @@ import Header from '../../components/Header/Header.tsx'
 import EngineerList from '../../components/EngineerList/EngineerList.tsx'
 import { engineersApi } from '../../logic/engineerApi'
 import type { Engineer } from '../../types/engineer'
+import type { WorkOrder } from '../../types/workOrder.ts'
+import { orderApi } from '../../logic/orderApi.ts'
+import type { EngineerRoute } from '../../types/engineerRoute.ts'
 
 export default function Main() {
   const [engineers, setEngineers] = useState<Engineer[]>([])
+  const [orders, setOrders] = useState<WorkOrder[]>([])
+  const [activeEngineerId, setActiveEngineerId] = useState<string | null>(null)
+  const [engineerRoute, setEngineerRoute] = useState<EngineerRoute | null>(
+    null,
+  )
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [isBrigadesOpen, setIsBrigadesOpen] = useState(false)
@@ -20,6 +28,8 @@ export default function Main() {
         setIsLoading(true)
         setError(null)
         const data = await engineersApi.getAll(controller.signal)
+        const orders = await orderApi.getAll(controller.signal)
+        setOrders(orders)
         setEngineers(data)
       } catch {
         if (!controller.signal.aborted) {
@@ -39,17 +49,81 @@ export default function Main() {
     }
   }, [])
 
+  useEffect(() => {
+    if (!activeEngineerId) {
+      return
+    }
+
+    const controller = new AbortController()
+
+    const loadEngineerRoute = async () => {
+      try {
+        const route = await orderApi.getEngineerRoute(
+          activeEngineerId,
+          controller.signal,
+        )
+        setEngineerRoute(route)
+      } catch {
+        if (!controller.signal.aborted) {
+          setEngineerRoute(null)
+        }
+      }
+    }
+
+    void loadEngineerRoute()
+
+    return () => {
+      controller.abort()
+    }
+  }, [activeEngineerId])
+
+  const handleActiveEngineerChange = (engineerId: string | null) => {
+    setActiveEngineerId(engineerId)
+    setEngineerRoute(null)
+  }
+
+  const handleCloseBrigades = () => {
+    setIsBrigadesOpen(false)
+    handleActiveEngineerChange(null)
+  }
+
+  const routeOrders: WorkOrder[] =
+    engineerRoute?.stops.map((stop) => ({
+      id: stop.externalOrderId,
+      externalId: stop.externalOrderId,
+      address: stop.address,
+      latitude: stop.latitude,
+      longitude: stop.longitude,
+      windowStart: stop.serviceStart,
+      windowEnd: stop.serviceEnd,
+      priority: stop.priority,
+      status: 'Assigned',
+      taskType: stop.taskType,
+    })) ?? []
+
   return (
     <div className={styles.mainContainer}>
       <div className={styles.mapLayer}>
-        <RoutingMap />
+        <RoutingMap
+          workOrders={activeEngineerId ? routeOrders : orders}
+          isEngineerRoute={Boolean(activeEngineerId)}
+          encodedPolyline={engineerRoute?.encodedPolyline}
+          startPoint={
+            engineerRoute
+              ? {
+                  latitude: engineerRoute.startLatitude,
+                  longitude: engineerRoute.startLongitude,
+                }
+              : null
+          }
+        />
       </div>
 
       <div className={styles.overlayLayer}>
         <Header
           isBrigadesOpen={isBrigadesOpen}
           onBrigadesClick={() => setIsBrigadesOpen(true)}
-          onCloseBrigades={() => setIsBrigadesOpen(false)}
+          onCloseBrigades={handleCloseBrigades}
         />
         <div className={styles.contentLayer}>
           {isBrigadesOpen && (
@@ -57,6 +131,8 @@ export default function Main() {
               engineers={engineers}
               isLoading={isLoading}
               error={error}
+              activeEngineerId={activeEngineerId}
+              onActiveEngineerChange={handleActiveEngineerChange}
             />
           )}
         </div>

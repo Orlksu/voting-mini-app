@@ -8,14 +8,17 @@ type EngineerListProps = {
   engineers: Engineer[]
   isLoading: boolean
   error: string | null
+  activeEngineerId: string | null
+  onActiveEngineerChange: (engineerId: string | null) => void
 }
 
 export default function EngineerList({
   engineers,
   isLoading,
   error,
+  activeEngineerId,
+  onActiveEngineerChange,
 }: EngineerListProps) {
-  const [activeEngineerId, setActiveEngineerId] = useState<string | null>(null)
   const [detailsEngineerId, setDetailsEngineerId] = useState<string | null>(
     null,
   )
@@ -33,26 +36,29 @@ export default function EngineerList({
           {!detailsEngineerId && (
             <p className={styles.titleList}>список бригад</p>
           )}
-          {visibleEngineers.map((engineer) => (
-            <EngineerBlock
-              key={engineer.id}
-              engineer={engineer}
-              isActive={engineer.id === activeEngineerId}
-              isDetails={engineer.id === detailsEngineerId}
-              onClick={() =>
-                setActiveEngineerId((currentId) =>
-                  currentId === engineer.id ? null : engineer.id,
-                )
-              }
-              onDetailsClick={() => {
-                setActiveEngineerId(null)
-                setDetailsEngineerId(engineer.id)
-              }}
-            />
-          ))}
-          {detailsEngineerId && (
-            <EngineerDetails engineer={visibleEngineers[0]} />
-          )}
+          <div className={styles.listScrollArea}>
+            <div className={styles.listScrollViewport}>
+              {visibleEngineers.map((engineer) => (
+                <EngineerBlock
+                  key={engineer.id}
+                  engineer={engineer}
+                  isActive={engineer.id === activeEngineerId}
+                  isDetails={engineer.id === detailsEngineerId}
+                  onClick={() =>
+                    onActiveEngineerChange(
+                      activeEngineerId === engineer.id ? null : engineer.id,
+                    )
+                  }
+                  onDetailsClick={() => {
+                    setDetailsEngineerId(engineer.id)
+                  }}
+                />
+              ))}
+              {detailsEngineerId && (
+                <EngineerDetails engineer={visibleEngineers[0]} />
+              )}
+            </div>
+          </div>
         </>
       )}
     </div>
