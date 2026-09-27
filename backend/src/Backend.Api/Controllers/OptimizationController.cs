@@ -230,6 +230,7 @@ public class OptimizationController : ControllerBase
 
     private static WorkOrderInputDto ToWorkOrderInputDto(WorkOrder o) => new()
     {
+        InternalId = o.Id,
         ExternalId = o.ExternalId,
         District = o.District,
         Depot = new DepotDto(o.District, o.Location?.RawAddress ?? string.Empty,
@@ -244,6 +245,7 @@ public class OptimizationController : ControllerBase
         Priority = o.Priority,
         TaskType = o.TaskType,
         DurationMinutes = (int)o.ServiceDuration.TotalMinutes,
+        Status = o.Status,
     };
 
     /// <summary>

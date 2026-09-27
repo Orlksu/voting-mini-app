@@ -48,8 +48,7 @@ public class RouteOptimizer : IRouteOptimizer
                 return OrToolsVrpSolver.BuildEmptyResult(request.PlanDate, preprocess.Engineers, preprocess.Orders, preprocess.Unassigned);
             }
 
-            // 2. Матрицы расстояний/времени (Фаза B: Valhalla с costing по транспорту,
-            //    фолбэк — Haversine). Пер-бригадные: каждая бригада ездит в costing своего транспорта.
+            // 2. Матрицы расстояний/времени (Valhalla с costing по транспорту, фолбэк — Haversine).
             var locations = PlanPreprocessor.BuildLocations(preprocess.Engineers, preprocess.Orders);
             var vehicleTransports = preprocess.Engineers.Select(e => e.Transport).ToList();
             var matrices = await _matrixProvider.BuildAsync(locations, vehicleTransports, cancellationToken);
@@ -59,7 +58,7 @@ public class RouteOptimizer : IRouteOptimizer
                 .Select((engineer, index) => LunchPolicy.Resolve(engineer, index, preprocess.Engineers.Count))
                 .ToList();
 
-            // 4. Ядро оптимизации.
+            // 4. Ядро оптимизации на Google OR-Tools.
             var result = _solver.Solve(
                 preprocess.Engineers,
                 preprocess.Orders,
@@ -68,7 +67,7 @@ public class RouteOptimizer : IRouteOptimizer
                 preprocess.Unassigned,
                 request.TimeLimitSeconds);
 
-            // 5. Фаза D: полилинии маршрутов для карты (Valhalla /route, GeoJSON). Не фатально.
+            // 5. Полилинии маршрутов для карты (Valhalla /route, GeoJSON). Не фатально при ошибке.
             return await EnrichWithRouteGeometryAsync(result, preprocess.Engineers, cancellationToken);
         }
         catch (OperationCanceledException)
@@ -85,9 +84,9 @@ public class RouteOptimizer : IRouteOptimizer
     }
 
     /// <summary>
-    /// Фаза D: для каждого маршрута запрашиваем геометрию у Valhalla (costing по транспорту
-    /// бригады) и кладём ответ в <see cref="EngineerRouteDto.RouteGeoJson"/> (полный GeoJSON-ответ)
-    /// и <see cref="EngineerRouteDto.EncodedPolyline"/> (строка полилинии OSRM). При сбое — null.
+    /// Для каждого маршрута запрашиваем геометрию у Valhalla (costing по транспорту бригады)
+    /// и кладём ответ в <see cref="EngineerRouteDto.RouteGeoJson"/> и <see cref="EngineerRouteDto.EncodedPolyline"/>.
+    /// При сбое маршрут остаётся без геометрии.
     /// </summary>
     private async Task<OptimizationResultDto> EnrichWithRouteGeometryAsync(
         OptimizationResultDto result,
@@ -140,8 +139,7 @@ public class RouteOptimizer : IRouteOptimizer
                 string? geoJson = await _valhalla.GetRouteGeoJsonAsync(locations, costing, cancellationToken);
                 if (string.IsNullOrWhiteSpace(geoJson) && costing == "transit")
                 {
-                    // Без GTFS транзит-полилинию Valhalla не отдаёт (400) — берём auto-прокси,
-                    // как в матрицах (Фаза B). Геометрия используется только для карты.
+                    // Без GTFS транзит-полилинию Valhalla не отдаёт (400) — берём auto-прокси
                     geoJson = await _valhalla.GetRouteGeoJsonAsync(locations, "auto", cancellationToken);
                 }
 
@@ -165,7 +163,7 @@ public class RouteOptimizer : IRouteOptimizer
         return result with { Routes = routes };
     }
 
-    /// <summary>Из OSRM-ответа Valhalla вытаскиваем строку полилинии routes[0].geometry.</summary>
+    /// <summary>Из OSRM-ответа Valhalla извлекаем строку полилинии routes[0].geometry.</summary>
     private static string? TryExtractPolyline(string? geoJson)
     {
         if (string.IsNullOrWhiteSpace(geoJson))

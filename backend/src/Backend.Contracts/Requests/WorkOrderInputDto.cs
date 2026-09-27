@@ -6,6 +6,7 @@ namespace Backend.Contracts.Requests;
 
 public record WorkOrderInputDto
 {
+    public Guid? InternalId { get; set; }
     public string ExternalId { get; set; } = string.Empty;
     public string? District { get; set; }
     public DepotDto? Depot { get; set; }
@@ -19,12 +20,6 @@ public record WorkOrderInputDto
     public OrderPriority Priority { get; set; }
     public string TaskType { get; set; } = string.Empty;
     public int DurationMinutes { get; set; } = 30;
-    /// <summary>Статус заявки. Завершённые/отменённые заявки в планирование не попадают.</summary>
     public OrderStatus Status { get; set; } = OrderStatus.NotDispatched;
-
-    /// <summary>
-    /// Требуемое оборудование (Фаза C). Заявку может выполнить только бригада,
-    /// у которой есть ВСЁ перечисленное оборудование. Пустой список = нет требований.
-    /// </summary>
     public List<string> RequiredEquipment { get; set; } = [];
 }

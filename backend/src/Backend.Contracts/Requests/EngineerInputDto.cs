@@ -16,5 +16,7 @@ public record EngineerInputDto(
     DateTimeOffset? LunchStart = null,
     DateTimeOffset? LunchEnd = null,
     int LunchDurationMinutes = 60,
-    List<string>? Equipment = null
+    List<string>? Equipment = null,
+    string? District = null,
+    Guid? DepotId = null
 );
