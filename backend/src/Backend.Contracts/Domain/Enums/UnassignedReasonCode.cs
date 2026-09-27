@@ -7,5 +7,6 @@ public enum UnassignedReasonCode
     TimeWindowMissed = 3,
     ShiftLimitExceeded = 4,
     CapacityOverload = 5,
-    EmergencyDisplaced = 6
+    EmergencyDisplaced = 6,
+    MissingCoordinates = 7
 }

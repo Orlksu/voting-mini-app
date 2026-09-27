@@ -121,21 +121,22 @@ public class WorkOrderService(
             var cancelledCount = stops.Count(s => s.Status == OrderStatus.Cancelled);
 
             return new EngineerRouteDto(
-                route.EngineerExternalId,
-                route.EngineerName,
-                route.Transport,
-                route.Stops.Count,
-                activeCount,
-                completedCount,
-                cancelledCount,
-                Math.Round(route.TotalDistanceKm, 2),
-                Math.Round(route.BaselineDistanceKm ?? (route.TotalDistanceKm * 1.25), 2),
-                (int)route.TotalTravelTime.TotalMinutes,
-                stops,
-                polyline,
-                engineer.StartLocation?.RawAddress,
-                engineer.StartLocation?.Coordinates.Latitude,
-                engineer.StartLocation?.Coordinates.Longitude);
+                EngineerExternalId: route.EngineerExternalId,
+                EngineerName: route.EngineerName,
+                Transport: route.Transport,
+                TotalOrders: route.Stops.Count,
+                ActiveOrdersCount: activeCount,
+                CompletedOrdersCount: completedCount,
+                CancelledOrdersCount: cancelledCount,
+                TotalDistanceKm: Math.Round(route.TotalDistanceKm, 2),
+                BaselineDistanceKm: Math.Round(route.BaselineDistanceKm ?? (route.TotalDistanceKm * 1.25), 2),
+                TotalTravelMinutes: (int)route.TotalTravelTime.TotalMinutes,
+                Stops: stops,
+                EncodedPolyline: polyline,
+                BreakStops: [],
+                StartAddress: engineer.StartLocation?.RawAddress,
+                StartLatitude: engineer.StartLocation?.Coordinates.Latitude,
+                StartLongitude: engineer.StartLocation?.Coordinates.Longitude);
         }
 
         // 2. Fallback на in-memory план
@@ -209,21 +210,22 @@ public class WorkOrderService(
 
         // 3. Инженер найден в базе, но на смену у него 0 назначенных заявок -> возвращаем пустой маршрут (200 OK)
         return new EngineerRouteDto(
-            engineer.ExternalId,
-            engineer.Name,
-            engineer.Transport,
-            0,
-            0,
-            0,
-            0,
-            0.0,
-            0.0,
-            0,
-            [],
-            null,
-            engineer.StartLocation?.RawAddress,
-            engineer.StartLocation?.Coordinates.Latitude,
-            engineer.StartLocation?.Coordinates.Longitude);
+            EngineerExternalId: engineer.ExternalId,
+            EngineerName: engineer.Name,
+            Transport: engineer.Transport,
+            TotalOrders: 0,
+            ActiveOrdersCount: 0,
+            CompletedOrdersCount: 0,
+            CancelledOrdersCount: 0,
+            TotalDistanceKm: 0.0,
+            BaselineDistanceKm: 0.0,
+            TotalTravelMinutes: 0,
+            Stops: [],
+            EncodedPolyline: null,
+            BreakStops: [],
+            StartAddress: engineer.StartLocation?.RawAddress,
+            StartLatitude: engineer.StartLocation?.Coordinates.Latitude,
+            StartLongitude: engineer.StartLocation?.Coordinates.Longitude);
     }
 
     public async Task<List<WorkOrderDto>> GetAllAsync(CancellationToken ct = default)

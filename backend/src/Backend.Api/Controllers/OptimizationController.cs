@@ -280,12 +280,12 @@ public class OptimizationController : ControllerBase
         _logger.LogInformation("Job {JobId}: перепланирование ({EventType}) на {EventTime}",
             job.JobId, request.EventType, request.EventTime);
 
-        RunJob(job.JobId, planRequest);
+        RunJob(job.JobId, planRequest, request.EventType);
 
         return AcceptedAtAction(nameof(GetJobStatus), new { jobId = job.JobId }, job);
     }
 
-    private void RunJob(Guid jobId, CreateOptimizationPlanRequest request)
+    private void RunJob(Guid jobId, CreateOptimizationPlanRequest request, RescheduleEventType? eventType = null)
     {
         _ = Task.Run(async () =>
         {
@@ -293,6 +293,24 @@ public class OptimizationController : ControllerBase
             try
             {
                 var result = await _optimizer.OptimizeAsync(request, CancellationToken.None);
+
+                // Фаза D: при внезапной аварии (перепланирование) заявки, не вошедшие в новый план
+                // из-за срочности, помечаем причиной «вытеснена срочной заявкой».
+                if (eventType == RescheduleEventType.NewUrgentOrder)
+                {
+                    result = result with
+                    {
+                        UnassignedOrders = result.UnassignedOrders
+                            .Select(u => u.ReasonCode == UnassignedReasonCode.TimeWindowMissed
+                                ? u with
+                                {
+                                    ReasonCode = UnassignedReasonCode.EmergencyDisplaced,
+                                    ReasonDescription = "Заявка вытеснена срочной (авария) при перепланировании."
+                                }
+                                : u)
+                            .ToList()
+                    };
+                }
 
                 // Персистим рассчитанный план в БД и переводим статус заявок в Dispatched
                 try
@@ -521,18 +539,18 @@ public class OptimizationController : ControllerBase
     }
 
     private static EngineerInputDto ToEngineerInputDto(Engineer e) => new(
-        e.ExternalId,
-        e.Name,
-        e.StartLocation.RawAddress,
-        e.StartLocation.Coordinates.Latitude,
-        e.StartLocation.Coordinates.Longitude,
-        e.Shift.Start,
-        e.Shift.End,
-        e.Transport,
-        [.. e.Skills],
-        e.MaxOrdersPerShift,
-        e.District,
-        e.DepotId);
+        ExternalId: e.ExternalId,
+        Name: e.Name,
+        StartAddress: e.StartLocation.RawAddress,
+        StartLatitude: e.StartLocation.Coordinates.Latitude,
+        StartLongitude: e.StartLocation.Coordinates.Longitude,
+        ShiftStart: e.Shift.Start,
+        ShiftEnd: e.Shift.End,
+        Transport: e.Transport,
+        Skills: [.. e.Skills],
+        MaxOrdersPerShift: e.MaxOrdersPerShift,
+        District: e.District,
+        DepotId: e.DepotId);
 
     private static WorkOrderInputDto ToWorkOrderInputDto(WorkOrder o) => new()
     {
@@ -551,6 +569,7 @@ public class OptimizationController : ControllerBase
         Priority = o.Priority,
         TaskType = o.TaskType,
         DurationMinutes = (int)o.ServiceDuration.TotalMinutes,
+        Status = o.Status,
     };
 
     private static OptimizationResultDto MapToDto(OperationResult op) => new(
@@ -567,35 +586,35 @@ public class OptimizationController : ControllerBase
             op.Metrics.BaselineTotalDistanceKm,
             op.Metrics.DistanceEconomyPercent),
         op.Routes.Select(r => new EngineerRouteDto(
-            r.EngineerExternalId,
-            r.EngineerName,
-            r.Transport,
-            r.Stops.Count,
-            r.Stops.Count,
-            0,
-            0,
-            r.TotalDistanceKm,
-            r.BaselineDistanceKm ?? Math.Round(r.TotalDistanceKm * 1.25, 2),
-            (int)r.TotalTravelTime.TotalMinutes,
-            r.Stops.OrderBy(s => s.Sequence).Select(s => new RouteStopDto(
-                s.Sequence,
-                s.ExternalOrderId,
-                s.Location?.RawAddress ?? string.Empty,
-                s.Location?.Coordinates.Latitude ?? 0.0,
-                s.Location?.Coordinates.Longitude ?? 0.0,
-                s.EstimatedArrival,
-                s.ServiceStart,
-                s.ServiceEnd,
-                (int)s.TravelTimeFromPrevious.TotalMinutes,
-                s.DistanceFromPreviousKm,
-                string.Empty,
-                OrderPriority.Normal,
-                s.AssignmentReason,
-                OrderStatus.Dispatched,
-                s.OrderId
+            EngineerExternalId: r.EngineerExternalId,
+            EngineerName: r.EngineerName,
+            Transport: r.Transport,
+            TotalOrders: r.Stops.Count,
+            ActiveOrdersCount: r.Stops.Count,
+            CompletedOrdersCount: 0,
+            CancelledOrdersCount: 0,
+            TotalDistanceKm: r.TotalDistanceKm,
+            BaselineDistanceKm: r.BaselineDistanceKm ?? Math.Round(r.TotalDistanceKm * 1.25, 2),
+            TotalTravelMinutes: (int)r.TotalTravelTime.TotalMinutes,
+            Stops: r.Stops.OrderBy(s => s.Sequence).Select(s => new RouteStopDto(
+                Sequence: s.Sequence,
+                ExternalOrderId: s.ExternalOrderId,
+                Address: s.Location?.RawAddress ?? string.Empty,
+                Latitude: s.Location?.Coordinates.Latitude ?? 0.0,
+                Longitude: s.Location?.Coordinates.Longitude ?? 0.0,
+                EstimatedArrival: s.EstimatedArrival,
+                ServiceStart: s.ServiceStart,
+                ServiceEnd: s.ServiceEnd,
+                TravelDurationMinutes: (int)s.TravelTimeFromPrevious.TotalMinutes,
+                DistanceFromPrevKm: s.DistanceFromPreviousKm,
+                TaskType: string.Empty,
+                Priority: OrderPriority.Normal,
+                AssignmentReason: s.AssignmentReason,
+                Status: OrderStatus.Dispatched,
+                OrderId: s.OrderId
             )).ToList(),
-            r.EncodedPolyline,
-            null, null, null
+            EncodedPolyline: r.EncodedPolyline,
+            BreakStops: []
         )).ToList(),
         op.UnassignedOrders.Select(u => new UnassignedOrderDto(
             u.ExternalOrderId,
@@ -603,4 +622,76 @@ public class OptimizationController : ControllerBase
             u.ReasonCode,
             u.ReasonDescription
         )).ToList());
+
+    /// <summary>
+    /// Сэмпл-запрос для быстрой проверки распределения без БД.
+    /// </summary>
+    [HttpGet("sample-request")]
+    [ProducesResponseType<CreateOptimizationPlanRequest>(StatusCodes.Status200OK)]
+    public ActionResult<CreateOptimizationPlanRequest> GetSampleRequest()
+    {
+        var date = DateTimeOffset.UtcNow.Date.AddHours(9);
+        var engineers = new List<EngineerInputDto>
+        {
+            new(
+                ExternalId: "ENG-01",
+                Name: "Иван Смирнов",
+                StartAddress: "г. Москва, ул. Тверская, 7",
+                StartLatitude: 55.7576,
+                StartLongitude: 37.6111,
+                ShiftStart: date,
+                ShiftEnd: date.AddHours(9),
+                Transport: TransportType.Car,
+                Skills: [SkillType.Installation, SkillType.LocalRepair],
+                MaxOrdersPerShift: 10
+            ),
+            new(
+                ExternalId: "ENG-02",
+                Name: "Алексей Новиков",
+                StartAddress: "г. Москва, пр-т Мира, 40",
+                StartLatitude: 55.7820,
+                StartLongitude: 37.6334,
+                ShiftStart: date,
+                ShiftEnd: date.AddHours(9),
+                Transport: TransportType.PublicTransit,
+                Skills: [SkillType.LocalRepair, SkillType.Emergency],
+                MaxOrdersPerShift: 8
+            )
+        };
+
+        var orders = new List<WorkOrderInputDto>
+        {
+            new WorkOrderInputDto
+            {
+                ExternalId = "ORD-101",
+                Depot = new DepotDto("Диспетчерская", "г. Москва, ул. Тверская, 7", 55.7576, 37.6111),
+                Address = "г. Москва, ул. Арбат, 15",
+                Latitude = 55.7505,
+                Longitude = 37.5942,
+                WindowStart = date.AddHours(1),
+                WindowEnd = date.AddHours(3),
+                RequiredSkill = SkillType.Installation,
+                RequiredTransport = TransportType.Car,
+                Priority = OrderPriority.High,
+                TaskType = "Подключение клиента",
+                DurationMinutes = 70
+            },
+            new WorkOrderInputDto
+            {
+                ExternalId = "ORD-102",
+                Depot = new DepotDto("Диспетчерская", "г. Москва, ул. Тверская, 7", 55.7576, 37.6111),
+                Address = "г. Москва, ул. Сретенка, 24",
+                Latitude = 55.7698,
+                Longitude = 37.6331,
+                WindowStart = date.AddHours(2),
+                WindowEnd = date.AddHours(4),
+                RequiredSkill = SkillType.LocalRepair,
+                RequiredTransport = null,
+                Priority = OrderPriority.Normal,
+                TaskType = "Ремонт оборудования",
+                DurationMinutes = 30
+            }
+        };
+        return Ok(new CreateOptimizationPlanRequest(date, engineers, orders));
+    }
 }

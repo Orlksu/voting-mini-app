@@ -13,6 +13,10 @@ public record EngineerInputDto(
     TransportType Transport,
     List<SkillType> Skills,
     int MaxOrdersPerShift = 15,
+    DateTimeOffset? LunchStart = null,
+    DateTimeOffset? LunchEnd = null,
+    int LunchDurationMinutes = 60,
+    List<string>? Equipment = null,
     string? District = null,
     Guid? DepotId = null
 );

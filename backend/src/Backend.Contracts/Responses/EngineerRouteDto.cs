@@ -15,7 +15,9 @@ public record EngineerRouteDto(
     int TotalTravelMinutes,
     List<RouteStopDto> Stops,
     string? EncodedPolyline,
+    List<BreakStopDto> BreakStops,
     string? StartAddress = null,
     double? StartLatitude = null,
-    double? StartLongitude = null
+    double? StartLongitude = null,
+    string? RouteGeoJson = null
 );

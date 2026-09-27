@@ -39,3 +39,6 @@ build/
 
 # Valhalla routing data & tiles
 valhalla-data/
+
+# Внутренние данные кейса (нормативы) — не включать в git
+**/Нормативы*.xlsx

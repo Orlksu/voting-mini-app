@@ -302,7 +302,8 @@ public class MockRouteOptimizer : IRouteOptimizer
                 EncodedPolyline: encodedPolyline,
                 StartAddress: state.Engineer.StartAddress,
                 StartLatitude: state.Engineer.StartLatitude,
-                StartLongitude: state.Engineer.StartLongitude));
+                StartLongitude: state.Engineer.StartLongitude,
+                BreakStops: []));
 
             totalDistance += routeDistance;
             totalTravelMinutes += state.TotalTravelMinutes;

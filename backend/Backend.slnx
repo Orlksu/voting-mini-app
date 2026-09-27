@@ -4,4 +4,7 @@
     <Project Path="src/Backend.Contracts/Backend.Contracts.csproj" />
     <Project Path="src/Backend.RoutingEngine/Backend.RoutingEngine.csproj" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/SolverSmoke/SolverSmoke.csproj" />
+  </Folder>
 </Solution>
