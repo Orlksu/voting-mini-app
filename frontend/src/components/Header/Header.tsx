@@ -8,6 +8,8 @@ type HeaderProps = {
   isRequestsOpen: boolean
   onRequestsClick: () => void
   onUploadFileClick: () => void
+  onOptimizeClick: () => void
+  isOptimizing: boolean
 }
 
 export default function Header({
@@ -17,6 +19,8 @@ export default function Header({
   isRequestsOpen,
   onRequestsClick,
   onUploadFileClick,
+  onOptimizeClick,
+  isOptimizing,
 }: HeaderProps) {
   const [isUploadOpen, setIsUploadOpen] = useState(false)
   const uploadRef = useRef<HTMLDivElement>(null)
@@ -87,6 +91,15 @@ export default function Header({
             </div>
           </div>
         </div>
+        <button
+          type="button"
+          className={styles.optimize}
+          disabled={isOptimizing}
+          onClick={onOptimizeClick}
+        >
+          <span className="material-symbols-rounded">route</span>
+          {isOptimizing ? 'распределение...' : 'распределить'}
+        </button>
       </div>
     </div>
   )

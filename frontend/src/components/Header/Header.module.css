@@ -176,3 +176,24 @@
     color: rgb(234, 190, 95);
   }
 }
+
+.optimize {
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+
+  padding: 12px 24px;
+
+  font: inherit;
+  font-size: 20px;
+  color: #0F0F0F;
+  background: #FBB72C;
+  border: none;
+  border-radius: 30px;
+}
+
+.optimize:disabled {
+  cursor: default;
+  opacity: 0.5;
+}

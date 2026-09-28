@@ -72,16 +72,45 @@
   color: #FF6B6B;
 }
 
-.showOrders {
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.primaryAction,
+.secondaryAction {
   cursor: pointer;
-  align-self: flex-end;
 
   padding: 8px 20px;
 
   font: inherit;
   font-size: 16px;
-  color: #0F0F0F;
-  background: #FBB72C;
   border: none;
   border-radius: 30px;
+}
+
+.primaryAction {
+  color: #0F0F0F;
+  background: #FBB72C;
+}
+
+.secondaryAction {
+  color: #B3B3B3;
+  background: rgba(37, 37, 37, 1);
+}
+
+.barIndeterminate {
+  width: 40%;
+  animation: indeterminate 1.2s ease-in-out infinite;
+}
+
+@keyframes indeterminate {
+  from {
+    transform: translateX(-100%);
+  }
+
+  to {
+    transform: translateX(250%);
+  }
 }
