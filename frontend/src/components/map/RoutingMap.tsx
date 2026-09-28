@@ -6,7 +6,7 @@ import 'maplibre-gl/dist/maplibre-gl.css'
 import type { WorkOrder } from '../../types/workOrder.ts'
 import Map, { Layer, Marker, Source } from 'react-map-gl/maplibre'
 import type { MapLayerMouseEvent, MapRef } from 'react-map-gl/maplibre'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import styles from './RoutingMap.module.css'
 import OrderPopup from './OrderPopup.tsx'
 
@@ -56,6 +56,48 @@ const clusterAccentColor: ExpressionSpecification = [
   EMERGENCY_COLOR,
 ]
 
+function isValidLngLat(longitude: number, latitude: number) {
+  return (
+    Number.isFinite(longitude) &&
+    Number.isFinite(latitude) &&
+    longitude >= -180 &&
+    longitude <= 180 &&
+    latitude >= -90 &&
+    latitude <= 90
+  )
+}
+
+const START_POINT_TOLERANCE_DEG = 0.5
+
+// бэкенд отдаёт маршруты и в polyline5 (1e5), и в polyline6 (1e6, формат Valhalla)
+function decodeRoutePolyline(
+  encoded: string,
+  startPoint: { latitude: number; longitude: number } | null,
+): [number, number][] {
+  const candidates = [1e5, 1e6].map((precision) =>
+    decodePolyline(encoded, precision),
+  )
+
+  const isPlausible = (coordinates: [number, number][]) => {
+    if (coordinates.length === 0) return false
+    if (!coordinates.every(([lng, lat]) => isValidLngLat(lng, lat))) {
+      return false
+    }
+    if (!startPoint) return true
+
+    const [firstLng, firstLat] = coordinates[0]
+    return (
+      Math.abs(firstLat - startPoint.latitude) < START_POINT_TOLERANCE_DEG &&
+      Math.abs(firstLng - startPoint.longitude) < START_POINT_TOLERANCE_DEG
+    )
+  }
+
+  return (
+    candidates.find(isPlausible) ??
+    candidates[0].filter(([lng, lat]) => isValidLngLat(lng, lat))
+  )
+}
+
 interface RoutingMapProps {
   workOrders?: WorkOrder[]
   isEngineerRoute?: boolean
@@ -70,7 +112,10 @@ interface RoutingMapProps {
   onOrderSelect?: (externalId: string | null) => void
 }
 
-function decodePolyline(encoded: string): [number, number][] {
+function decodePolyline(
+  encoded: string,
+  precision: number,
+): [number, number][] {
   let index = 0
   let latitude = 0
   let longitude = 0
@@ -87,8 +132,7 @@ function decodePolyline(encoded: string): [number, number][] {
       shift += 5
     } while (byte >= 0x20)
 
-    const latitudeChange =
-      result & 1 ? ~(result >> 1) : result >> 1
+    const latitudeChange = result & 1 ? ~(result >> 1) : result >> 1
 
     result = 0
     shift = 0
@@ -99,12 +143,11 @@ function decodePolyline(encoded: string): [number, number][] {
       shift += 5
     } while (byte >= 0x20)
 
-    const longitudeChange =
-      result & 1 ? ~(result >> 1) : result >> 1
+    const longitudeChange = result & 1 ? ~(result >> 1) : result >> 1
 
     latitude += latitudeChange
     longitude += longitudeChange
-    coordinates.push([longitude / 1e5, latitude / 1e5])
+    coordinates.push([longitude / precision, latitude / precision])
   }
 
   return coordinates
@@ -124,21 +167,30 @@ export function RoutingMap({
   const [isFeatureHovered, setIsFeatureHovered] = useState(false)
   const mapRef = useRef<MapRef>(null)
 
+  const routeCoordinates = useMemo(
+    () =>
+      encodedPolyline ? decodeRoutePolyline(encodedPolyline, startPoint) : [],
+    [encodedPolyline, startPoint],
+  )
+
   useEffect(() => {
     const map = mapRef.current
     if (!map || !isEngineerRoute || !workOrders) return
 
     const bounds = new LngLatBounds()
     for (const order of workOrders) {
-      bounds.extend([order.longitude, order.latitude])
+      if (isValidLngLat(order.longitude, order.latitude)) {
+        bounds.extend([order.longitude, order.latitude])
+      }
     }
-    if (startPoint) {
+    if (
+      startPoint &&
+      isValidLngLat(startPoint.longitude, startPoint.latitude)
+    ) {
       bounds.extend([startPoint.longitude, startPoint.latitude])
     }
-    if (encodedPolyline) {
-      for (const coordinate of decodePolyline(encodedPolyline)) {
-        bounds.extend(coordinate)
-      }
+    for (const coordinate of routeCoordinates) {
+      bounds.extend(coordinate)
     }
     if (bounds.isEmpty()) return
 
@@ -147,7 +199,7 @@ export function RoutingMap({
       maxZoom: ROUTE_FIT_MAX_ZOOM,
       duration: 800,
     })
-  }, [isEngineerRoute, workOrders, startPoint, encodedPolyline])
+  }, [isEngineerRoute, workOrders, startPoint, routeCoordinates])
 
   const selectedOrderId = selectedOrder?.externalId
   const selectedLatitude = selectedOrder?.latitude
@@ -159,7 +211,8 @@ export function RoutingMap({
       !map ||
       !selectedOrderId ||
       selectedLatitude === undefined ||
-      selectedLongitude === undefined
+      selectedLongitude === undefined ||
+      !isValidLngLat(selectedLongitude, selectedLatitude)
     ) {
       return
     }
@@ -227,34 +280,39 @@ export function RoutingMap({
 
   const workOrdersGeoJson: FeatureCollection<Point> = {
     type: 'FeatureCollection',
-    features: workOrders.map((workOrder) => ({
-      type: 'Feature',
-      properties: {
-        externalId: workOrder.externalId,
-        priority: workOrder.priority,
-      },
-      geometry: {
-        type: 'Point',
-        coordinates: [workOrder.longitude, workOrder.latitude],
-      },
-    })),
+    features: workOrders
+      .filter((workOrder) =>
+        isValidLngLat(workOrder.longitude, workOrder.latitude),
+      )
+      .map((workOrder) => ({
+        type: 'Feature',
+        properties: {
+          externalId: workOrder.externalId,
+          priority: workOrder.priority,
+        },
+        geometry: {
+          type: 'Point',
+          coordinates: [workOrder.longitude, workOrder.latitude],
+        },
+      })),
   }
 
-  const routeGeoJson = encodedPolyline
-    ? {
-        type: 'FeatureCollection' as const,
-        features: [
-          {
-            type: 'Feature' as const,
-            properties: {},
-            geometry: {
-              type: 'LineString' as const,
-              coordinates: decodePolyline(encodedPolyline),
+  const routeGeoJson =
+    routeCoordinates.length > 1
+      ? {
+          type: 'FeatureCollection' as const,
+          features: [
+            {
+              type: 'Feature' as const,
+              properties: {},
+              geometry: {
+                type: 'LineString' as const,
+                coordinates: routeCoordinates,
+              },
             },
-          },
-        ],
-      }
-    : null
+          ],
+        }
+      : null
 
   return (
     <div
@@ -285,11 +343,7 @@ export function RoutingMap({
         cursor={isFeatureHovered ? 'pointer' : undefined}
       >
         {isEngineerRoute && routeGeoJson && (
-          <Source
-            id="engineer-route-line"
-            type="geojson"
-            data={routeGeoJson}
-          >
+          <Source id="engineer-route-line" type="geojson" data={routeGeoJson}>
             <Layer
               id="engineer-route-line"
               type="line"
@@ -299,13 +353,7 @@ export function RoutingMap({
               }}
               paint={{
                 'line-color': '#DEB111',
-                'line-width': [
-                  'step',
-                  ['zoom'],
-                  4,
-                  14,
-                  3,
-                ],
+                'line-width': ['step', ['zoom'], 4, 14, 3],
                 'line-dasharray': [
                   'step',
                   ['zoom'],
@@ -371,12 +419,7 @@ export function RoutingMap({
             clusterProperties={{
               emergencyCount: [
                 '+',
-                [
-                  'case',
-                  ['==', ['get', 'priority'], 'Emergency'],
-                  1,
-                  0,
-                ],
+                ['case', ['==', ['get', 'priority'], 'Emergency'], 1, 0],
               ],
             }}
           >
