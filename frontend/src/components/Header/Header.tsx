@@ -14,26 +14,15 @@ export default function Header({
   return (
     <div className={styles.headerContainer}>
       <p className={styles.title}>SMART ROUTING</p>
-      {isBrigadesOpen ? (
-        <div className={styles.sectionControls}>
-          <p className={styles.sectionTitle}>бригады</p>
-          <p
-            className={styles.closeButton}
-            aria-label="Закрыть список бригад"
-            onClick={onCloseBrigades}
-          >
-            ×
-          </p>
-        </div>
-      ) : (
-        <nav>
-          <button type="button" onClick={onBrigadesClick}>
-            бригады
-          </button>
-          <button type="button">заявки</button>
-        </nav>
-      )}
-      <p className={styles.uploadCsv}>загрузить заявки</p>
+      <nav>
+        <p
+          className={`${styles.brigades} ${isBrigadesOpen ? styles.active : ''}`}
+          onClick={isBrigadesOpen ? onCloseBrigades : onBrigadesClick}
+        >
+          бригады
+        </p>
+        <p>заявки</p>
+      </nav>
     </div>
   )
 }
