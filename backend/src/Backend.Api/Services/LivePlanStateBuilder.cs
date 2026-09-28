@@ -1,0 +1,188 @@
+using Backend.Api.Infrastructure.Repositories;
+using Backend.Contracts.Domain.Entities;
+using Backend.Contracts.Domain.Enums;
+using Backend.Contracts.Requests;
+using Backend.Contracts.Responses;
+
+namespace Backend.Api.Services;
+
+/// <summary>
+/// Строит «живое» состояние плана на заданный момент времени (now),
+/// используя time-based inference без ручного ввода диспетчера.
+///
+/// Правила вывода статуса для каждой остановки:
+///   ServiceEnd   &lt;= now  → Completed (инженер уже ушёл с точки)
+///   ServiceStart &lt;= now &lt; ServiceEnd → InProgress (инженер сейчас на объекте)
+///   ServiceStart &gt;  now  → Pending (остановка ещё не началась)
+///
+/// Текущая позиция инженера = последняя Completed точка (или его депо).
+/// Доступен с = ServiceEnd InProgress-остановки (или now, если свободен).
+/// </summary>
+public sealed class LivePlanStateBuilder(
+    OptimizationJobStore jobStore,
+    IEngineerRepository engineerRepo,
+    IWorkOrderRepository workOrderRepo)
+{
+    /// <summary>
+    /// Состояние инженера на момент now.
+    /// </summary>
+    public sealed record EngineerLiveContext(
+        EngineerInputDto Engineer,
+        /// <summary>Остановки плана, которые ещё не начаты (Pending) на момент now.</summary>
+        List<RouteStopDto> PendingStops,
+        /// <summary>ExternalId заявок, которые уже выполнены (Completed) на момент now.</summary>
+        List<string> CompletedOrderIds
+    );
+
+    /// <summary>
+    /// Строит live-контекст для всех инженеров из последнего плана.
+    /// </summary>
+    /// <param name="now">Момент времени, на который строится срез.</param>
+    /// <param name="ct">Токен отмены.</param>
+    public async Task<List<EngineerLiveContext>> BuildAsync(DateTimeOffset now, CancellationToken ct)
+    {
+        var lastResult = jobStore.LastResult;
+        if (lastResult == null)
+            return [];
+
+        // Загружаем всех инженеров из БД для получения координат депо
+        var allEngineers = await engineerRepo.GetAvailableEngineersAsync(ct: ct);
+        var engineerMap = allEngineers
+            .GroupBy(e => e.ExternalId, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+
+        var contexts = new List<EngineerLiveContext>();
+
+        foreach (var route in lastResult.Routes)
+        {
+            if (!engineerMap.TryGetValue(route.EngineerExternalId, out var engEntity))
+                continue;
+
+            var completedIds = new List<string>();
+            var pendingStops = new List<RouteStopDto>();
+
+            // Текущая позиция: последняя completed точка или депо
+            double currentLat = engEntity.StartLocation.Coordinates.Latitude;
+            double currentLon = engEntity.StartLocation.Coordinates.Longitude;
+            DateTimeOffset availableFrom = now;
+
+            foreach (var stop in route.Stops.OrderBy(s => s.Sequence))
+            {
+                if (stop.ServiceEnd <= now)
+                {
+                    // Остановка завершена
+                    completedIds.Add(stop.ExternalOrderId);
+                    currentLat = stop.Latitude;
+                    currentLon = stop.Longitude;
+                }
+                else if (stop.ServiceStart <= now)
+                {
+                    // Инженер сейчас на объекте — недоступен до конца работ
+                    currentLat = stop.Latitude;
+                    currentLon = stop.Longitude;
+                    availableFrom = stop.ServiceEnd;
+                    // Эту заявку НЕ добавляем в pending — она выполняется прямо сейчас
+                }
+                else
+                {
+                    // Остановка ещё впереди
+                    pendingStops.Add(stop);
+                }
+            }
+
+            var engineerDto = BuildEngineerDto(engEntity, currentLat, currentLon, availableFrom);
+            contexts.Add(new EngineerLiveContext(engineerDto, pendingStops, completedIds));
+        }
+
+        return contexts;
+    }
+
+    /// <summary>
+    /// Собирает список оставшихся WorkOrderInputDto из pending-остановок всех инженеров,
+    /// плюс все NotDispatched заявки из БД (не вошедшие в прошлый план).
+    /// Исключает заявки с указанным ExternalId (например, отменённые).
+    /// </summary>
+    public async Task<List<WorkOrderInputDto>> BuildRemainingOrdersAsync(
+        List<EngineerLiveContext> contexts,
+        DateTimeOffset? targetDate,
+        string? excludeExternalId,
+        CancellationToken ct)
+    {
+        // Pending-остановки из текущего плана
+        var pendingFromPlan = contexts
+            .SelectMany(c => c.PendingStops)
+            .Select(s => new WorkOrderInputDto
+            {
+                ExternalId = s.ExternalOrderId,
+                Address = s.Address,
+                Latitude = s.Latitude,
+                Longitude = s.Longitude,
+                Priority = s.Priority,
+                TaskType = s.TaskType,
+                Status = OrderStatus.Dispatched
+            })
+            .ToList();
+
+        // NotDispatched из БД — заявки, которые не вошли в прошлый план
+        var notDispatched = await workOrderRepo
+            .GetPendingOrdersForPlanningAsync(targetDate: targetDate, status: OrderStatus.NotDispatched, ct: ct);
+
+        var pendingExtIds = pendingFromPlan
+            .Select(o => o.ExternalId.Trim())
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var fromDb = notDispatched
+            .Where(o => !pendingExtIds.Contains(o.ExternalId.Trim()))
+            .Select(ToWorkOrderInputDto)
+            .ToList();
+
+        var all = pendingFromPlan.Concat(fromDb).ToList();
+
+        // Исключаем отменённую заявку, если задана
+        if (!string.IsNullOrWhiteSpace(excludeExternalId))
+        {
+            all = all
+                .Where(o => !string.Equals(o.ExternalId.Trim(), excludeExternalId.Trim(),
+                    StringComparison.OrdinalIgnoreCase))
+                .ToList();
+        }
+
+        return all;
+    }
+
+    private static EngineerInputDto BuildEngineerDto(
+        Backend.Contracts.Domain.Entities.Engineer eng,
+        double currentLat,
+        double currentLon,
+        DateTimeOffset availableFrom) => new(
+        ExternalId: eng.ExternalId,
+        Name: eng.Name,
+        StartAddress: eng.StartLocation.RawAddress,
+        StartLatitude: currentLat,
+        StartLongitude: currentLon,
+        ShiftStart: availableFrom,
+        ShiftEnd: eng.Shift.End,
+        Transport: eng.Transport,
+        Skills: [.. eng.Skills],
+        MaxOrdersPerShift: eng.MaxOrdersPerShift,
+        District: eng.District,
+        DepotId: eng.DepotId);
+
+    private static WorkOrderInputDto ToWorkOrderInputDto(WorkOrder o) => new()
+    {
+        InternalId = o.Id,
+        ExternalId = o.ExternalId,
+        District = o.District,
+        Address = o.Location?.RawAddress ?? string.Empty,
+        Latitude = o.Location?.Coordinates.Latitude,
+        Longitude = o.Location?.Coordinates.Longitude,
+        WindowStart = o.PreferredWindow.Start,
+        WindowEnd = o.PreferredWindow.End,
+        RequiredSkill = o.RequiredSkill,
+        RequiredTransport = o.RequiredTransport,
+        Priority = o.Priority,
+        TaskType = o.TaskType,
+        DurationMinutes = (int)o.ServiceDuration.TotalMinutes,
+        Status = o.Status,
+    };
+}

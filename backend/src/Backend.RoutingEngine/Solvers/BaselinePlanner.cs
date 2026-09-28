@@ -192,35 +192,64 @@ public static class BaselinePlanner
     }
 
     /// <summary>
-    /// Дистанция базового (наивного) маршрута бригады: обход назначенных заявок в хронологическом
-    /// порядке их временных окон (Earliest Deadline First) без комбинаторной оптимизации перестановок.
+    /// Дистанция базового (наивного) маршрута бригады: симуляция "человека-диспетчера" (Жадный алгоритм / Nearest Neighbor).
+    /// Диспетчер отправляет инженера на ближайшую точку, окно которой уже открыто или откроется раньше всего.
     /// </summary>
     public static double ComputeRouteBaseline(
         int vehicle,
         IReadOnlyList<WorkOrderInputDto> orders,
         IReadOnlyList<int> assignedOrderIndexes,
         int numVehicles,
-        double[,] distanceKm)
+        double[,] distanceKm,
+        long[,] timeMinutes,
+        long shiftStartMinutes,
+        double optimizedDistance)
     {
         if (assignedOrderIndexes.Count == 0)
         {
             return 0;
         }
 
-        var chronological = assignedOrderIndexes
-            .OrderBy(idx => orders[idx].WindowStart ?? orders[idx].WindowEnd ?? DateTimeOffset.MaxValue)
-            .ThenBy(idx => orders[idx].ExternalId, StringComparer.Ordinal)
-            .ToList();
+        var unvisited = assignedOrderIndexes.ToList();
+        int current = vehicle; // Стартуем из депо
+        long currentTime = shiftStartMinutes;
+        double totalDistance = 0;
 
-        int current = vehicle;
-        double total = 0;
-
-        foreach (int orderIndex in chronological)
+        while (unvisited.Count > 0)
         {
-            total += distanceKm[current, numVehicles + orderIndex];
-            current = numVehicles + orderIndex;
+            int bestNext = -1;
+            double minScore = double.MaxValue; // Оценка: расстояние + ожидание
+            long bestArrival = 0;
+
+            foreach (var idx in unvisited)
+            {
+                var order = orders[idx];
+                long travelTime = timeMinutes[current, numVehicles + idx];
+                long arrivalTime = currentTime + travelTime;
+                
+                long windowStart = 0;
+                if (order.WindowStart.HasValue)
+                {
+                    windowStart = (long)(order.WindowStart.Value.TimeOfDay).TotalMinutes;
+                }
+
+                long waitTime = Math.Max(0, windowStart - arrivalTime);
+                double score = distanceKm[current, numVehicles + idx] + (waitTime * 0.5);
+
+                if (score < minScore)
+                {
+                    minScore = score;
+                    bestNext = idx;
+                    bestArrival = arrivalTime + waitTime + order.DurationMinutes;
+                }
+            }
+
+            totalDistance += distanceKm[current, numVehicles + bestNext];
+            currentTime = bestArrival;
+            current = numVehicles + bestNext;
+            unvisited.Remove(bestNext);
         }
 
-        return total;
+        return totalDistance;
     }
 }

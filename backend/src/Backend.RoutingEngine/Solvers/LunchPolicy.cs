@@ -7,16 +7,13 @@ public sealed record LunchWindow(DateTimeOffset Start, DateTimeOffset End, int D
 
 /// <summary>
 /// Политика обедов: каскадные окна — пока одни бригады едят, другие работают.
-/// Если у бригады нет собственного окна, окно генерируется из ядра 11:00–15:00
-/// с равномерным сдвигом по числу бригад. Окно пересекается со сменой;
-/// если пересечения меньше длительности обеда — обед бригаде не назначается.
+/// Ядро обеда вычисляется динамически: центральные 4 часа смены.
 /// </summary>
 public static class LunchPolicy
 {
     public const int DefaultDurationMinutes = 60;
-
-    private static readonly TimeSpan CoreStart = new(11, 0, 0);
-    private static readonly TimeSpan CoreEnd = new(15, 0, 0);
+    
+    // Ширина "плавающего" ядра для обеда (4 часа)
     private const int CoreWidthMinutes = 240;
 
     /// <summary>Возвращает окно обеда для инженера либо null, если обед неприменим.</summary>
@@ -32,14 +29,26 @@ public static class LunchPolicy
         }
         else
         {
-            // Окно обеда внутри ядра 11:00–15:00 (4 часа для размещения 60-минутного обеда).
-            // Солвер гибко вписывает перерыв в естественное окно ожидания между заявками.
-            var anchor = new DateTimeOffset(
-                engineer.ShiftStart.Year, engineer.ShiftStart.Month, engineer.ShiftStart.Day,
-                CoreStart.Hours, CoreStart.Minutes, CoreStart.Seconds, engineer.ShiftStart.Offset);
+            var shiftDuration = (engineer.ShiftEnd - engineer.ShiftStart).TotalMinutes;
+            
+            // Сужаем "плавающее" окно, чтобы не взрывать пространство поиска для OR-Tools.
+            // Окно будет длиться ровно 2 часа в середине смены.
+            double coreWidth = Math.Min(120, shiftDuration);
+            double startOffset = (shiftDuration - coreWidth) / 2.0;
+            
+            var anchor = engineer.ShiftStart.AddMinutes(startOffset);
 
-            windowStart = anchor;
-            windowEnd = anchor.AddMinutes(CoreWidthMinutes);
+            // Снова включаем каскад (разброс бригад внутри этих 2 часов)
+            int stepMinutes = totalEngineers > 1
+                ? Math.Max(duration, (int)(coreWidth / totalEngineers))
+                : 0;
+
+            windowStart = anchor.AddMinutes(stepMinutes * engineerIndex);
+            // Окно для конкретного инженера: ровно время на обед + 30 минут люфта
+            windowEnd = windowStart.AddMinutes(duration + 30);
+            
+            var coreEnd = anchor.AddMinutes(coreWidth);
+            if (windowEnd > coreEnd) windowEnd = coreEnd;
         }
 
         // Пересечение со сменой.

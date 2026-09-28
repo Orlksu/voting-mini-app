@@ -1,6 +1,8 @@
 using Backend.Api.Services;
 using Backend.Api.Services.Common;
 using Backend.Api.Services.WorkOrderService;
+using Backend.Contracts.Domain.Enums;
+using Backend.Contracts.Interfaces;
 using Backend.Contracts.Requests;
 using Backend.Contracts.Responses;
 using Microsoft.AspNetCore.Mvc;
@@ -13,6 +15,8 @@ namespace Backend.Api.Controllers;
 public class WorkOrdersController(
     IWorkOrderService workOrderService,
     OrderImportJobStore jobStore,
+    OptimizationJobStore optimizationJobStore,
+    LivePlanStateBuilder liveState,
     IServiceScopeFactory scopeFactory,
     ILogger<WorkOrdersController> logger) : ControllerBase
 {
@@ -106,16 +110,18 @@ public class WorkOrdersController(
     /// <summary>
     /// Отмена заявки на обслуживание с указанием причины отмены.
     /// Завершенные (Completed) заявки отменить нельзя (400 Bad Request).
+    /// Если заявка была распределена (Dispatched), автоматически запускается перепланирование:
+    /// высвободившееся время инженера может быть заполнено заявкой из очереди NotDispatched.
     /// </summary>
     /// <param name="id">Уникальный идентификатор заявки (Guid или уникальный ExternalId).</param>
     /// <param name="district">Опциональный район (District) для однозначной идентификации при отмене по ExternalId.</param>
     /// <param name="request">Тело запроса с опциональной причиной отмены.</param>
     /// <param name="ct">Токен отмены запроса.</param>
-    /// <response code="200">Заявка успешно отменена.</response>
+    /// <response code="200">Заявка успешно отменена. Поле replanJobId содержит ID задачи перепланирования (если была запущена).</response>
     /// <response code="400">Ошибка валидации причины или попытка отменить завершенную заявку.</response>
     /// <response code="404">Заявка не найдена.</response>
     [HttpPost("{id}/cancel")]
-    [ProducesResponseType<WorkOrderDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<WorkOrderCancelResultDto>(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> Cancel(
@@ -126,8 +132,76 @@ public class WorkOrdersController(
     {
         try
         {
+            // Получаем текущий статус до отмены, чтобы решить нужно ли перепланирование
+            var orderBefore = await workOrderService.GetByIdentifierAsync(id, district, ct);
+            bool wasDispatched = orderBefore?.Status == OrderStatus.Dispatched;
+
             var result = await workOrderService.CancelAsync(id, district, request?.Reason, ct);
-            return Ok(result);
+
+            Guid? replanJobId = null;
+
+            // Автоматическое перепланирование: заявка была в маршруте инженера
+            if (wasDispatched && optimizationJobStore.LastResult != null)
+            {
+                try
+                {
+                    var now = DateTimeOffset.UtcNow;
+                    var contexts = await liveState.BuildAsync(now, ct);
+                    var engineers = contexts.Count > 0
+                        ? contexts.Select(c => c.Engineer).ToList()
+                        : optimizationJobStore.LastEngineers ?? [];
+
+                    if (engineers.Count > 0)
+                    {
+                        // Собираем оставшиеся заявки, исключая отменённую
+                        var remainingOrders = await liveState.BuildRemainingOrdersAsync(
+                            contexts,
+                            targetDate: null,
+                            excludeExternalId: result.ExternalId,
+                            ct);
+
+                        if (remainingOrders.Count > 0)
+                        {
+                            var planRequest = new CreateOptimizationPlanRequest(now, engineers, remainingOrders);
+                            var job = optimizationJobStore.Create();
+                            replanJobId = job.JobId;
+
+                            logger.LogInformation(
+                                "Job {JobId}: перепланирование после отмены заявки {OrderId} (была Dispatched)",
+                                job.JobId, result.ExternalId);
+
+                            // Запускаем перепланирование в фоне через scoped-зависимости
+                            _ = Task.Run(async () =>
+                            {
+                                optimizationJobStore.MoveToProcessing(job.JobId);
+                                try
+                                {
+                                    using var scope = scopeFactory.CreateScope();
+                                    var scopedOptimizer = scope.ServiceProvider.GetRequiredService<IRouteOptimizer>();
+                                    var replanResult = await scopedOptimizer.OptimizeAsync(planRequest, CancellationToken.None);
+                                    optimizationJobStore.Complete(job.JobId, replanResult);
+
+                                    logger.LogInformation(
+                                        "Job {JobId}: перепланирование после отмены завершено ({Routes} маршрутов)",
+                                        job.JobId, replanResult.Routes.Count);
+                                }
+                                catch (Exception ex)
+                                {
+                                    logger.LogError(ex, "Job {JobId}: ошибка перепланирования после отмены", job.JobId);
+                                    optimizationJobStore.Fail(job.JobId, ex.Message);
+                                }
+                            });
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // Не даём ошибке перепланирования прервать успешную отмену заявки
+                    logger.LogWarning(ex, "Не удалось запустить автоперепланирование после отмены заявки {OrderId}", id);
+                }
+            }
+
+            return Ok(new WorkOrderCancelResultDto(result, replanJobId));
         }
         catch (KeyNotFoundException ex)
         {

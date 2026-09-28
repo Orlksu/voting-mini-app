@@ -20,6 +20,7 @@ public class OptimizationController : ControllerBase
     private readonly IWorkOrderRepository _workOrders;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<OptimizationController> _logger;
+    private readonly LivePlanStateBuilder _liveState;
 
     public OptimizationController(
         IRouteOptimizer optimizer,
@@ -27,7 +28,8 @@ public class OptimizationController : ControllerBase
         IEngineerRepository engineers,
         IWorkOrderRepository workOrders,
         IServiceScopeFactory scopeFactory,
-        ILogger<OptimizationController> logger)
+        ILogger<OptimizationController> logger,
+        LivePlanStateBuilder liveState)
     {
         _optimizer = optimizer;
         _jobStore = jobStore;
@@ -35,6 +37,7 @@ public class OptimizationController : ControllerBase
         _workOrders = workOrders;
         _scopeFactory = scopeFactory;
         _logger = logger;
+        _liveState = liveState;
     }
 
     /// <summary>
@@ -167,40 +170,61 @@ public class OptimizationController : ControllerBase
             }
         }
 
-        var engEntities = await _engineers.GetAvailableEngineersAsync(depotId, district, ct);
-        var engineers = engEntities.Select(ToEngineerInputDto).ToList();
-        if (engineers.Count == 0)
-            return BadRequest("Нет доступных инженеров для перепланирования.");
+        var nowUtc = DateTimeOffset.UtcNow;
+        var nowMskCurrent = nowUtc.ToOffset(mskOffset);
+        bool isToday = targetDate.Date == nowMskCurrent.Date;
 
-        var woEntities = await _workOrders.GetPendingOrdersForPlanningAsync(depotId, district, targetDate, status: null, ct: ct);
-        var orders = woEntities.Select(ToWorkOrderInputDto).ToList();
-        if (orders.Count == 0)
+        List<EngineerInputDto> finalEngineers;
+        List<WorkOrderInputDto> finalOrders;
+
+        // Пытаемся использовать Live State (учет реального времени суток и выполненных заявок)
+        var contexts = isToday ? await _liveState.BuildAsync(nowUtc, ct) : [];
+
+        if (isToday && contexts.Count > 0)
+        {
+            _logger.LogInformation("Replan: используется Live State (от {Now})", nowUtc);
+            var allEngineers = contexts.Select(c => c.Engineer).ToList();
+            var allRemaining = await _liveState.BuildRemainingOrdersAsync(contexts, targetDate, null, ct);
+
+            // Применяем фильтры UI (если переданы)
+            if (depotId.HasValue) 
+                allEngineers = allEngineers.Where(e => e.DepotId == depotId.Value).ToList();
+            if (!string.IsNullOrEmpty(district)) 
+                allEngineers = allEngineers.Where(e => string.Equals(e.District, district, StringComparison.OrdinalIgnoreCase)).ToList();
+
+            finalEngineers = allEngineers;
+            finalOrders = allRemaining; // Оптимизатор сам разберется с District Penalty
+        }
+        else
+        {
+            _logger.LogInformation("Replan: используется планирование с нуля (Live State недоступен или дата не сегодня)");
+            var engEntities = await _engineers.GetAvailableEngineersAsync(depotId, district, ct);
+            var engineers = engEntities.Select(ToEngineerInputDto).ToList();
+            
+            var woEntities = await _workOrders.GetPendingOrdersForPlanningAsync(depotId, district, targetDate, status: null, ct: ct);
+            var orders = woEntities.Select(ToWorkOrderInputDto).ToList();
+            
+            var planDateMsk = targetDate.ToOffset(mskOffset);
+            finalEngineers = engineers.Select(e =>
+            {
+                var shiftDuration = e.ShiftEnd - e.ShiftStart;
+                if (shiftDuration <= TimeSpan.Zero) shiftDuration += TimeSpan.FromDays(1);
+                var shiftMskStart = e.ShiftStart.ToOffset(mskOffset);
+                var alignedStartMsk = new DateTimeOffset(planDateMsk.Year, planDateMsk.Month, planDateMsk.Day, shiftMskStart.Hour, shiftMskStart.Minute, shiftMskStart.Second, mskOffset);
+                var alignedStartUtc = alignedStartMsk.ToUniversalTime();
+                return e with { ShiftStart = alignedStartUtc, ShiftEnd = alignedStartUtc + shiftDuration };
+            }).ToList();
+            
+            finalOrders = orders;
+        }
+
+        if (finalEngineers.Count == 0)
+            return BadRequest("Нет доступных инженеров для перепланирования.");
+        if (finalOrders.Count == 0)
             return BadRequest($"Нет незавершенных заявок для перепланирования на дату {targetDate:yyyy-MM-dd}.");
 
         var planDateUtc = targetDate.ToUniversalTime();
-        var planDateMsk = targetDate.ToOffset(mskOffset);
-
-        var alignedEngineers = engineers.Select(e =>
-        {
-            var shiftDuration = e.ShiftEnd - e.ShiftStart;
-            if (shiftDuration <= TimeSpan.Zero)
-            {
-                shiftDuration += TimeSpan.FromDays(1);
-            }
-
-            var shiftMskStart = e.ShiftStart.ToOffset(mskOffset);
-            var alignedStartMsk = new DateTimeOffset(
-                planDateMsk.Year, planDateMsk.Month, planDateMsk.Day,
-                shiftMskStart.Hour, shiftMskStart.Minute, shiftMskStart.Second,
-                mskOffset);
-
-            var alignedStartUtc = alignedStartMsk.ToUniversalTime();
-            var alignedEndUtc = alignedStartUtc + shiftDuration;
-
-            return e with { ShiftStart = alignedStartUtc, ShiftEnd = alignedEndUtc };
-        }).ToList();
-
-        var request = new CreateOptimizationPlanRequest(planDateUtc, alignedEngineers, orders);
+        var request = new CreateOptimizationPlanRequest(isToday && contexts.Count > 0 ? nowUtc : planDateUtc, finalEngineers, finalOrders);
 
         _jobStore.SetLastEngineers(request.Engineers);
         var job = _jobStore.Create();
@@ -281,6 +305,83 @@ public class OptimizationController : ControllerBase
             job.JobId, request.EventType, request.EventTime);
 
         RunJob(job.JobId, planRequest, request.EventType);
+
+        return AcceptedAtAction(nameof(GetJobStatus), new { jobId = job.JobId }, job);
+    }
+
+    /// <summary>
+    /// Оперативное перепланирование при поступлении аварийной заявки.
+    /// Система автоматически определяет текущее состояние каждого инженера по расписанию плана
+    /// (time-based inference): кто завершил работу, кто сейчас на объекте, кто свободен.
+    /// Никакого ручного ввода диспетчера не требуется.
+    /// </summary>
+    [HttpPost("emergency")]
+    [ProducesResponseType<JobStatusResponseDto>(StatusCodes.Status202Accepted)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<ActionResult<JobStatusResponseDto>> Emergency(
+        [FromBody] EmergencyOrderRequest request,
+        CancellationToken ct = default)
+    {
+        var now = request.EventTime ?? DateTimeOffset.UtcNow;
+        var mskOffset = TimeSpan.FromHours(3);
+
+        // 1. Строим live-состояние каждого инженера по времени now
+        var contexts = await _liveState.BuildAsync(now, ct);
+
+        // 2. Если нет данных предыдущего плана — берём инженеров из БД напрямую
+        List<EngineerInputDto> engineers;
+        if (contexts.Count == 0)
+        {
+            var engEntities = await _engineers.GetAvailableEngineersAsync(ct: ct);
+            engineers = engEntities.Select(e => new EngineerInputDto(
+                ExternalId: e.ExternalId,
+                Name: e.Name,
+                StartAddress: e.StartLocation.RawAddress,
+                StartLatitude: e.StartLocation.Coordinates.Latitude,
+                StartLongitude: e.StartLocation.Coordinates.Longitude,
+                ShiftStart: now,
+                ShiftEnd: e.Shift.End,
+                Transport: e.Transport,
+                Skills: [.. e.Skills],
+                MaxOrdersPerShift: e.MaxOrdersPerShift,
+                District: e.District,
+                DepotId: e.DepotId)).ToList();
+        }
+        else
+        {
+            engineers = contexts.Select(c => c.Engineer).ToList();
+        }
+
+        if (engineers.Count == 0)
+            return BadRequest("Нет доступных инженеров для перепланирования.");
+
+        // 3. Собираем оставшиеся заявки (Pending из плана + NotDispatched из БД) + новая аварийная
+        var remainingOrders = await _liveState.BuildRemainingOrdersAsync(
+            contexts,
+            targetDate: now.ToOffset(mskOffset).Date == DateTimeOffset.UtcNow.ToOffset(mskOffset).Date
+                ? null
+                : now,
+            excludeExternalId: null,
+            ct);
+
+        remainingOrders.Add(request.UrgentOrder with
+        {
+            Priority = OrderPriority.Emergency,
+            Status = OrderStatus.NotDispatched
+        });
+
+        if (remainingOrders.Count == 0)
+            return BadRequest("Нет активных заявок для перепланирования.");
+
+        var planRequest = new CreateOptimizationPlanRequest(now, engineers, remainingOrders);
+        _jobStore.SetLastEngineers(engineers);
+
+        var job = _jobStore.Create();
+        _logger.LogInformation(
+            "Job {JobId}: аварийное перепланирование на {Now} (инженеров: {Engineers}, заявок: {Orders}, аварийная: {UrgentId})",
+            job.JobId, now, engineers.Count, remainingOrders.Count, request.UrgentOrder.ExternalId);
+
+        RunJob(job.JobId, planRequest, RescheduleEventType.NewUrgentOrder);
 
         return AcceptedAtAction(nameof(GetJobStatus), new { jobId = job.JobId }, job);
     }
