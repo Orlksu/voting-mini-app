@@ -18,6 +18,12 @@ const skillLabels: Record<string, string> = {
   Emergency: 'аварийные работы',
 }
 
+const shiftTimeFormatter = new Intl.DateTimeFormat('ru-RU', {
+  hour: '2-digit',
+  minute: '2-digit',
+  timeZone: 'Europe/Moscow',
+})
+
 const EngineerLabel = ({
   label,
   fields,
@@ -67,13 +73,7 @@ export default function EngineerDetails({ engineer }: EngineerDetailsProps) {
       <EngineerLabel
         label="смена"
         fields={[
-          `${new Date(engineer.shiftStart).toLocaleTimeString('ru-RU', {
-            hour: '2-digit',
-            minute: '2-digit',
-          })}-${new Date(engineer.shiftEnd).toLocaleTimeString('ru-RU', {
-            hour: '2-digit',
-            minute: '2-digit',
-          })}`,
+          `${shiftTimeFormatter.format(new Date(engineer.shiftStart))}–${shiftTimeFormatter.format(new Date(engineer.shiftEnd))}`,
         ]}
       />
       <EngineerLabel

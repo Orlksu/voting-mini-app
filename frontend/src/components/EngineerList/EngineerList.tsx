@@ -4,11 +4,19 @@ import EngineerBlock from './EngineerBlock/EngineerBlock.tsx'
 import { useState } from 'react'
 import EngineerDetails from './EngineerDetails/EngineerDetails.tsx'
 
+export type EngineerRouteStatus =
+  | 'idle'
+  | 'loading'
+  | 'ready'
+  | 'empty'
+  | 'notFound'
+
 type EngineerListProps = {
   engineers: Engineer[]
   isLoading: boolean
   error: string | null
   activeEngineerId: string | null
+  routeStatus: EngineerRouteStatus
   onActiveEngineerChange: (engineerId: string | null) => void
 }
 
@@ -17,15 +25,22 @@ export default function EngineerList({
   isLoading,
   error,
   activeEngineerId,
+  routeStatus,
   onActiveEngineerChange,
 }: EngineerListProps) {
   const [detailsEngineerId, setDetailsEngineerId] = useState<string | null>(
     null,
   )
 
-  const visibleEngineers = detailsEngineerId
-    ? engineers.filter((engineer) => engineer.id === detailsEngineerId)
-    : engineers
+  const openedDetailsId =
+    detailsEngineerId === activeEngineerId ? detailsEngineerId : null
+
+  const sortedEngineers = [...engineers].sort((a, b) =>
+    a.externalId.localeCompare(b.externalId, 'ru', { numeric: true }),
+  )
+  const visibleEngineers = openedDetailsId
+    ? sortedEngineers.filter((engineer) => engineer.id === openedDetailsId)
+    : sortedEngineers
 
   return (
     <div className={styles.engineerListContainer}>
@@ -33,7 +48,7 @@ export default function EngineerList({
       {error && <p role="alert">{error}</p>}
       {!isLoading && !error && (
         <>
-          {!detailsEngineerId && (
+          {!openedDetailsId && (
             <p className={styles.titleList}>список бригад</p>
           )}
           <div className={styles.listScrollArea}>
@@ -43,18 +58,23 @@ export default function EngineerList({
                   key={engineer.id}
                   engineer={engineer}
                   isActive={engineer.id === activeEngineerId}
-                  isDetails={engineer.id === detailsEngineerId}
+                  isDetails={engineer.id === openedDetailsId}
+                  routeStatus={
+                    engineer.id === activeEngineerId ? routeStatus : 'idle'
+                  }
                   onClick={() =>
                     onActiveEngineerChange(
                       activeEngineerId === engineer.id ? null : engineer.id,
                     )
                   }
                   onDetailsClick={() => {
-                    setDetailsEngineerId(engineer.id)
+                    setDetailsEngineerId(
+                      openedDetailsId === engineer.id ? null : engineer.id,
+                    )
                   }}
                 />
               ))}
-              {detailsEngineerId && (
+              {openedDetailsId && (
                 <EngineerDetails engineer={visibleEngineers[0]} />
               )}
             </div>

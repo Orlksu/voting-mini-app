@@ -1,6 +1,6 @@
 import styles from './Main.module.css'
 import { RoutingMap } from '../../components/map/RoutingMap'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Header from '../../components/Header/Header.tsx'
 import EngineerList from '../../components/EngineerList/EngineerList.tsx'
 import RequestsModal from '../../components/RequestsModal/RequestsModal.tsx'
@@ -14,6 +14,7 @@ import type { Engineer } from '../../types/engineer'
 import type { WorkOrder } from '../../types/workOrder.ts'
 import { orderApi } from '../../logic/orderApi.ts'
 import type { EngineerRoute } from '../../types/engineerRoute.ts'
+import type { EngineerRouteStatus } from '../../components/EngineerList/EngineerList.tsx'
 import { optimizationApi } from '../../logic/optimizationApi.ts'
 import type { OptimizationResult } from '../../types/optimization.ts'
 
@@ -53,6 +54,9 @@ export default function Main() {
   const [engineerRoute, setEngineerRoute] = useState<EngineerRoute | null>(
     null,
   )
+  const [routeErrorEngineerId, setRouteErrorEngineerId] = useState<
+    string | null
+  >(null)
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [activePanel, setActivePanel] = useState<
@@ -125,6 +129,7 @@ export default function Main() {
       } catch {
         if (!controller.signal.aborted) {
           setEngineerRoute(null)
+          setRouteErrorEngineerId(activeEngineerId)
         }
       }
     }
@@ -275,19 +280,44 @@ export default function Main() {
     handleActiveEngineerChange(null)
   }
 
-  const routeOrders: WorkOrder[] =
-    engineerRoute?.stops.map((stop) => ({
-      id: stop.externalOrderId,
-      externalId: stop.externalOrderId,
-      address: stop.address,
-      latitude: stop.latitude,
-      longitude: stop.longitude,
-      windowStart: stop.serviceStart,
-      windowEnd: stop.serviceEnd,
-      priority: stop.priority,
-      status: 'Assigned',
-      taskType: stop.taskType,
-    })) ?? []
+  const routeOrders: WorkOrder[] = useMemo(
+    () =>
+      engineerRoute?.stops.map((stop) => ({
+        id: stop.externalOrderId,
+        externalId: stop.externalOrderId,
+        address: stop.address,
+        latitude: stop.latitude,
+        longitude: stop.longitude,
+        windowStart: stop.serviceStart,
+        windowEnd: stop.serviceEnd,
+        priority: stop.priority,
+        status: 'Assigned',
+        taskType: stop.taskType,
+      })) ?? [],
+    [engineerRoute],
+  )
+
+  const routeStartPoint = useMemo(
+    () =>
+      engineerRoute
+        ? {
+            latitude: engineerRoute.startLatitude,
+            longitude: engineerRoute.startLongitude,
+          }
+        : null,
+    [engineerRoute],
+  )
+
+  const routeStatus: EngineerRouteStatus = !activeEngineerId
+    ? 'idle'
+    : engineerRoute
+      ? engineerRoute.stops.length > 0
+        ? 'ready'
+        : 'empty'
+      : routeErrorEngineerId === activeEngineerId
+        ? 'notFound'
+        : 'loading'
+  const isShowingRoute = routeStatus === 'ready'
 
   const selectedOrder = selectedOrderId
     ? (orders.find((order) => order.externalId === selectedOrderId) ??
@@ -302,17 +332,10 @@ export default function Main() {
     <div className={styles.mainContainer}>
       <div className={styles.mapLayer}>
         <RoutingMap
-          workOrders={activeEngineerId ? routeOrders : orders}
-          isEngineerRoute={Boolean(activeEngineerId)}
+          workOrders={isShowingRoute ? routeOrders : orders}
+          isEngineerRoute={isShowingRoute}
           encodedPolyline={engineerRoute?.encodedPolyline}
-          startPoint={
-            engineerRoute
-              ? {
-                  latitude: engineerRoute.startLatitude,
-                  longitude: engineerRoute.startLongitude,
-                }
-              : null
-          }
+          startPoint={routeStartPoint}
           selectedOrder={selectedOrder}
           selectedOrderEngineerName={selectedOrderEngineerName}
           isSelectedOrderEngineerLoading={isResolvingOrderEngineer}
@@ -338,6 +361,7 @@ export default function Main() {
               isLoading={isLoading}
               error={error}
               activeEngineerId={activeEngineerId}
+              routeStatus={routeStatus}
               onActiveEngineerChange={handleActiveEngineerChange}
             />
           )}

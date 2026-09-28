@@ -6,7 +6,7 @@ import 'maplibre-gl/dist/maplibre-gl.css'
 import type { WorkOrder } from '../../types/workOrder.ts'
 import Map, { Layer, Marker, Source } from 'react-map-gl/maplibre'
 import type { MapLayerMouseEvent, MapRef } from 'react-map-gl/maplibre'
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import styles from './RoutingMap.module.css'
 import OrderPopup from './OrderPopup.tsx'
 
@@ -23,6 +23,8 @@ const CLUSTER_LAYER_ID = 'work-orders-clusters'
 const POINTS_LAYER_ID = 'work-orders-points'
 const ROUTE_POINTS_LAYER_ID = 'engineer-route-points'
 const ORDER_ZOOM_MIN = 15
+const ROUTE_FIT_PADDING = { top: 160, bottom: 80, left: 440, right: 80 }
+const ROUTE_FIT_MAX_ZOOM = 15
 const CLUSTER_FONT = ['Montserrat Bold']
 const CLUSTER_COLOR = '#EABE5F'
 const EMERGENCY_COLOR = '#E5484D'
@@ -121,6 +123,31 @@ export function RoutingMap({
   const [zoom, setZoom] = useState(11)
   const [isFeatureHovered, setIsFeatureHovered] = useState(false)
   const mapRef = useRef<MapRef>(null)
+
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !isEngineerRoute || !workOrders) return
+
+    const bounds = new LngLatBounds()
+    for (const order of workOrders) {
+      bounds.extend([order.longitude, order.latitude])
+    }
+    if (startPoint) {
+      bounds.extend([startPoint.longitude, startPoint.latitude])
+    }
+    if (encodedPolyline) {
+      for (const coordinate of decodePolyline(encodedPolyline)) {
+        bounds.extend(coordinate)
+      }
+    }
+    if (bounds.isEmpty()) return
+
+    map.fitBounds(bounds, {
+      padding: ROUTE_FIT_PADDING,
+      maxZoom: ROUTE_FIT_MAX_ZOOM,
+      duration: 800,
+    })
+  }, [isEngineerRoute, workOrders, startPoint, encodedPolyline])
 
   const handleMapClick = async (event: MapLayerMouseEvent) => {
     const feature = event.features?.[0]
