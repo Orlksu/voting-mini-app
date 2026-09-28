@@ -177,23 +177,97 @@
   }
 }
 
-.optimize {
+.optimizeGroup {
+  position: relative;
+  display: flex;
+  gap: 2px;
+}
+
+.optimize,
+.optimizeToggle {
   cursor: pointer;
   display: flex;
   align-items: center;
-  gap: 10px;
-
-  padding: 12px 24px;
 
   font: inherit;
   font-size: 20px;
   color: #0F0F0F;
   background: #FBB72C;
   border: none;
-  border-radius: 30px;
 }
 
-.optimize:disabled {
+.optimize {
+  gap: 10px;
+  padding: 12px 18px 12px 24px;
+  border-radius: 30px 0 0 30px;
+}
+
+.optimizeToggle {
+  padding: 12px 14px 12px 10px;
+  border-radius: 0 30px 30px 0;
+}
+
+.optimize:disabled,
+.optimizeToggle:disabled {
   cursor: default;
   opacity: 0.5;
+}
+
+.optimizeMenu {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  z-index: 10;
+  width: 320px;
+  padding: 15px;
+
+  background: #101010;
+  border-radius: 20px;
+
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity 0.2s ease-in-out,
+    visibility 0.2s;
+}
+
+.optimizeMenuOpen {
+  opacity: 1;
+  visibility: visible;
+}
+
+.optimizeMenuItem {
+  cursor: pointer;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  padding: 15px;
+
+  font: inherit;
+  text-align: left;
+  color: white;
+  background: rgba(37, 37, 37, 1);
+  border: none;
+  border-radius: 15px;
+  transition: color 0.2s ease-in-out;
+
+  > span {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+}
+
+.optimizeMenuItem:hover {
+  color: rgb(234, 190, 95);
+}
+
+.optimizeMenuTitle {
+  font-size: 18px;
+}
+
+.optimizeMenuHint {
+  font-size: 14px;
+  color: #7A7A7A;
 }

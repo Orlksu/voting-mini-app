@@ -19,10 +19,13 @@ import type { EngineerRouteStatus } from '../../components/EngineerList/Engineer
 import { optimizationApi } from '../../logic/optimizationApi.ts'
 import type { OptimizationResult } from '../../types/optimization.ts'
 
+type OptimizationMode = 'optimize' | 'replan'
+
 type ProgressJob = {
   type: 'import' | 'optimization'
   jobId: string
   fileName?: string
+  mode?: OptimizationMode
 }
 
 const PROGRESS_JOBS_STORAGE_KEY = 'progressJobs'
@@ -40,7 +43,11 @@ function parseProgressJob(value: unknown): ProgressJob | null {
       'fileName' in value && typeof value.fileName === 'string'
         ? value.fileName
         : undefined
-    return { type: value.type, jobId: value.jobId, fileName }
+    const mode =
+      'mode' in value && (value.mode === 'optimize' || value.mode === 'replan')
+        ? value.mode
+        : undefined
+    return { type: value.type, jobId: value.jobId, fileName, mode }
   }
   return null
 }
@@ -65,9 +72,7 @@ export default function Main() {
   const [engineers, setEngineers] = useState<Engineer[]>([])
   const [orders, setOrders] = useState<WorkOrder[]>([])
   const [activeEngineerId, setActiveEngineerId] = useState<string | null>(null)
-  const [engineerRoute, setEngineerRoute] = useState<EngineerRoute | null>(
-    null,
-  )
+  const [engineerRoute, setEngineerRoute] = useState<EngineerRoute | null>(null)
   const [routeErrorEngineerId, setRouteErrorEngineerId] = useState<
     string | null
   >(null)
@@ -204,21 +209,26 @@ export default function Main() {
     ])
   }
 
-  const startOptimization = async () => {
+  const startOptimization = async (mode: OptimizationMode = 'optimize') => {
     try {
       setIsStartingOptimization(true)
       setOptimizationError(null)
       setOptimizationResult(null)
-      const job = await optimizationApi.createJob()
+      const job =
+        mode === 'replan'
+          ? await optimizationApi.replan()
+          : await optimizationApi.createJob()
       setProgressJobs((jobs) => [
         ...jobs.filter((item) => item.type !== 'optimization'),
-        { type: 'optimization', jobId: job.jobId },
+        { type: 'optimization', jobId: job.jobId, mode },
       ])
     } catch (startError) {
       setOptimizationError(
         startError instanceof Error
           ? startError.message
-          : 'Не удалось запустить распределение',
+          : mode === 'replan'
+            ? 'Не удалось запустить перераспределение'
+            : 'Не удалось запустить распределение',
       )
     } finally {
       setIsStartingOptimization(false)
@@ -377,7 +387,8 @@ export default function Main() {
           isRequestsOpen={isRequestsOpen}
           onRequestsClick={handleRequestsClick}
           onUploadFileClick={() => setIsUploadModalOpen(true)}
-          onOptimizeClick={startOptimization}
+          onOptimizeClick={() => void startOptimization('optimize')}
+          onReplanClick={() => void startOptimization('replan')}
           isOptimizing={isOptimizing}
         />
         <div className={styles.contentLayer}>
@@ -435,13 +446,18 @@ export default function Main() {
               }}
               onOptimize={() => {
                 removeProgressJob(job.jobId)
-                void startOptimization()
+                void startOptimization('optimize')
               }}
             />
           ) : (
             <OptimizationProgress
               key={job.jobId}
               jobId={job.jobId}
+              title={
+                job.mode === 'replan'
+                  ? 'перераспределение заявок'
+                  : 'распределение заявок'
+              }
               onCompleted={handleOptimizationCompleted}
               onShowResult={() => {
                 setActivePanel('result')

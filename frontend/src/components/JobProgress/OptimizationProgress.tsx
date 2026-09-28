@@ -13,6 +13,7 @@ const MAX_POLL_FAILURES = 3
 
 type OptimizationProgressProps = {
   jobId: string
+  title: string
   onCompleted: (result: OptimizationResult) => Promise<void>
   onShowResult: () => void
   onClose: () => void
@@ -20,6 +21,7 @@ type OptimizationProgressProps = {
 
 export default function OptimizationProgress({
   jobId,
+  title,
   onCompleted,
   onShowResult,
   onClose,
@@ -94,10 +96,7 @@ export default function OptimizationProgress({
   const isFinished = result !== null || isFailed || error !== null
 
   return (
-    <JobProgressCard
-      title="распределение заявок"
-      onClose={isFinished ? onClose : undefined}
-    >
+    <JobProgressCard title={title} onClose={isFinished ? onClose : undefined}>
       {error ? (
         <p className={styles.error}>{error}</p>
       ) : isFailed ? (
@@ -123,9 +122,7 @@ export default function OptimizationProgress({
       ) : (
         <>
           <p className={styles.stage}>
-            {job?.status === 'Processing'
-              ? 'Расчёт маршрутов...'
-              : 'В очереди'}
+            {job?.status === 'Processing' ? 'Расчёт маршрутов...' : 'В очереди'}
           </p>
           <div className={styles.bar}>
             <div className={`${styles.barFill} ${styles.barIndeterminate}`} />

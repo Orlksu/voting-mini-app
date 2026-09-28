@@ -10,6 +10,11 @@ export const optimizationApi = {
     return response.data
   },
 
+  async replan(): Promise<JobStatusResponse> {
+    const response = await api.post<JobStatusResponse>('/optimization/replan')
+    return response.data
+  },
+
   async getJob(
     jobId: string,
     signal?: AbortSignal,
