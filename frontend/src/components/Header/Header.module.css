@@ -1,4 +1,6 @@
 .headerContainer {
+  --control-height: 45px;
+
   pointer-events: auto;
 
   background-color: rgb(27,26,26, 0.8);
@@ -14,16 +16,19 @@
 
   nav {
     display: flex;
+    align-items: center;
+    height: var(--control-height);
     background: #292929;
-    padding: 7px 10px;
+    padding: 0 10px;
     border-radius: 30px;
     gap: 10px;
 
     p {
       cursor: pointer;
       font-size: 20px;
+      white-space: nowrap;
       color: #B3B3B3;
-      padding: 5px 45px;
+      padding: 5px clamp(18px, 2.6vw, 45px);
       border-radius: 30px;
     }
 
@@ -38,11 +43,13 @@
     cursor: pointer;
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
     font-size: 20px;
+    white-space: nowrap;
+    height: var(--control-height);
     color: #B3B3B3;
     background: #101010;
-    padding: 12px 24px;
+    padding: 0 24px;
     border-radius: 30px;
   }
 }
@@ -74,7 +81,8 @@
 .title {
   color: #b3b3b3;
   font-weight: 900;
-  font-size: 45px;
+  font-size: clamp(30px, 3.1vw, 45px);
+  white-space: nowrap;
   font-family: var(--font-mono), monospace;
 }
 
@@ -177,6 +185,10 @@
   }
 }
 
+.headerContainer :global(.material-symbols-rounded) {
+  font-size: 20px;
+}
+
 .optimizeGroup {
   position: relative;
   display: flex;
@@ -188,6 +200,8 @@
   cursor: pointer;
   display: flex;
   align-items: center;
+  height: var(--control-height);
+  white-space: nowrap;
 
   font: inherit;
   font-size: 20px;
@@ -197,13 +211,13 @@
 }
 
 .optimize {
-  gap: 10px;
-  padding: 12px 18px 12px 24px;
+  gap: 8px;
+  padding: 0 16px 0 20px;
   border-radius: 30px 0 0 30px;
 }
 
 .optimizeToggle {
-  padding: 12px 14px 12px 10px;
+  padding: 0 12px 0 8px;
   border-radius: 0 30px 30px 0;
 }
 
