@@ -7,6 +7,7 @@ type HeaderProps = {
   onCloseBrigades: () => void
   isRequestsOpen: boolean
   onRequestsClick: () => void
+  onUploadFileClick: () => void
 }
 
 export default function Header({
@@ -15,6 +16,7 @@ export default function Header({
   onCloseBrigades,
   isRequestsOpen,
   onRequestsClick,
+  onUploadFileClick,
 }: HeaderProps) {
   const [isUploadOpen, setIsUploadOpen] = useState(false)
   const uploadRef = useRef<HTMLDivElement>(null)
@@ -69,7 +71,12 @@ export default function Header({
             className={`${styles.uploadMenu} ${isUploadOpen ? styles.uploadMenuOpen : ''}`}
           >
             <div className={styles.uploadMenuInner}>
-              <p>
+              <p
+                onClick={() => {
+                  setIsUploadOpen(false)
+                  onUploadFileClick()
+                }}
+              >
                 <span className="material-symbols-rounded">upload_file</span>
                 загрузить из файла (CSV)
               </p>
