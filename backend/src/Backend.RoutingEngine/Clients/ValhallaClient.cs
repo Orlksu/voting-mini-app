@@ -183,7 +183,11 @@ public class ValhallaClient : IValhallaClient
             var coordsStr = string.Join(";", stops.Select(s =>
                 string.Create(CultureInfo.InvariantCulture, $"{s.Coordinates.Longitude:F6},{s.Coordinates.Latitude:F6}")));
 
-            using var osrmClient = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
+            var handler = new HttpClientHandler
+            {
+                ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
+            };
+            using var osrmClient = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(5) };
             osrmClient.DefaultRequestHeaders.UserAgent.ParseAdd("LCT-Routing-Engine/1.0");
 
             var osrmUrl = $"https://router.project-osrm.org/route/v1/{profile}/{coordsStr}?overview=full&geometries=polyline";
