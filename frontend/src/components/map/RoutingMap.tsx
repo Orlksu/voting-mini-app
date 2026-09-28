@@ -149,6 +149,28 @@ export function RoutingMap({
     })
   }, [isEngineerRoute, workOrders, startPoint, encodedPolyline])
 
+  const selectedOrderId = selectedOrder?.externalId
+  const selectedLatitude = selectedOrder?.latitude
+  const selectedLongitude = selectedOrder?.longitude
+
+  useEffect(() => {
+    const map = mapRef.current
+    if (
+      !map ||
+      !selectedOrderId ||
+      selectedLatitude === undefined ||
+      selectedLongitude === undefined
+    ) {
+      return
+    }
+
+    map.flyTo({
+      center: [selectedLongitude, selectedLatitude],
+      zoom: Math.max(map.getZoom(), ORDER_ZOOM_MIN),
+      duration: 600,
+    })
+  }, [selectedOrderId, selectedLatitude, selectedLongitude])
+
   const handleMapClick = async (event: MapLayerMouseEvent) => {
     const feature = event.features?.[0]
     const map = mapRef.current
@@ -164,15 +186,8 @@ export function RoutingMap({
       feature.layer.id === ROUTE_POINTS_LAYER_ID
     ) {
       const externalId = feature.properties?.externalId
-      if (typeof externalId !== 'string' || feature.geometry.type !== 'Point') {
-        return
-      }
+      if (typeof externalId !== 'string') return
 
-      map.flyTo({
-        center: feature.geometry.coordinates as [number, number],
-        zoom: Math.max(map.getZoom(), ORDER_ZOOM_MIN),
-        duration: 600,
-      })
       onOrderSelect?.(externalId)
       return
     }

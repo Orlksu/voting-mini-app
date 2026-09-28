@@ -371,6 +371,10 @@ export default function Main() {
       <RequestsModal
         isOpen={isRequestsOpen}
         onClose={() => setActivePanel(null)}
+        onRequestClick={(externalId) => {
+          setActivePanel(null)
+          void handleOrderSelect(externalId)
+        }}
       />
 
       <UploadCsvModal

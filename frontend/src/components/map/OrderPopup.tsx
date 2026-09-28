@@ -59,6 +59,7 @@ export default function OrderPopup({
       offset={16}
       closeButton={false}
       closeOnClick={false}
+      focusAfterOpen={false}
       maxWidth="320px"
       className={styles.popup}
     >
