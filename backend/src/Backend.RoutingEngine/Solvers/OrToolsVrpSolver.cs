@@ -14,6 +14,7 @@ public class OrToolsVrpSolver
     private const int DefaultTimeLimitSeconds = 25;
     private const double MaxPedestrianFromDepotKm = 2.0;
     private const double MaxPedestrianLegKm = 1.8;
+    private const double MaxTransitLegKm = 6.5;
 
     public OptimizationResultDto Solve(
         IReadOnlyList<EngineerInputDto> engineers,
@@ -79,6 +80,7 @@ public class OrToolsVrpSolver
             long[,] vTime = timeMatrix[v];
             double[,] vDist = distanceMatrix[v];
             bool isPedestrian = eng.Transport == TransportType.Pedestrian;
+            bool isTransit = eng.Transport == TransportType.PublicTransit;
 
             // 1. Time callback (для Time dimension и временных окон)
             int timeCb = routing.RegisterTransitCallback((long fromIndex, long toIndex) =>
@@ -100,6 +102,17 @@ public class OrToolsVrpSolver
                     }
                 }
 
+                // Для общественного транспорта: переходы между заявками длиннее 6.5 км запрещены (исключает маятники через весь округ)
+                if (isTransit && fromNode >= numVehicles && fromNode < numMatrixPoints &&
+                    toNode >= numVehicles && toNode < numMatrixPoints)
+                {
+                    double legDist = vDist[fromNode, toNode];
+                    if (legDist > MaxTransitLegKm)
+                    {
+                        return MaxHorizonMinutes;
+                    }
+                }
+
                 long travelTime = (fromNode < numMatrixPoints && toNode < numMatrixPoints)
                     ? vTime[fromNode, toNode]
                     : 0;
@@ -114,7 +127,7 @@ public class OrToolsVrpSolver
             });
             vehicleTransitCallbacks[v] = timeCb;
 
-            // 2. Hybrid cost callback (взвешенная сумма реального расстояния и времени)
+            // 2. Hybrid cost callback (взвешенная сумма реального расстояния и времени с прогрессивным штрафом за маятники)
             int costCb = routing.RegisterTransitCallback((long fromIndex, long toIndex) =>
             {
                 int fromNode = manager.IndexToNode(fromIndex);
@@ -127,7 +140,16 @@ public class OrToolsVrpSolver
                 long travelTime = vTime[fromNode, toNode];
 
                 // 100 у.е. за каждый километр + 10 у.е. за каждую минуту в пути
-                return (long)Math.Round(distKm * 100.0) + (travelTime * 10);
+                long cost = (long)Math.Round(distKm * 100.0) + (travelTime * 10);
+
+                // Прогрессивный квадратичный штраф за перегоны длиннее 7.5 км (ломает маятники между удаленными кластерами)
+                if (distKm > 7.5)
+                {
+                    double excessKm = distKm - 7.5;
+                    cost += (long)Math.Round(excessKm * excessKm * 300.0);
+                }
+
+                return cost;
             });
 
             routing.SetArcCostEvaluatorOfVehicle(costCb, v);
