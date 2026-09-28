@@ -15,11 +15,14 @@ api.interceptors.response.use(
       return Promise.reject(error)
     }
 
-    const data = error.response?.data
+    const data: unknown = error.response?.data
     const serverMessage =
       typeof data === 'string' && data.length > 0
         ? data
-        : typeof data?.message === 'string'
+        : typeof data === 'object' &&
+            data !== null &&
+            'message' in data &&
+            typeof data.message === 'string'
           ? data.message
           : null
     const message =
