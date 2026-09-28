@@ -11,7 +11,9 @@ public class OrToolsVrpSolver
     private const long UnassignedPenaltyBase = 5_000_000;
     private const long VehicleFixedCost = 50_000;
     private const long MaxHorizonMinutes = 24 * 60;
-    private const int DefaultTimeLimitSeconds = 15;
+    private const int DefaultTimeLimitSeconds = 25;
+    private const double MaxPedestrianFromDepotKm = 2.0;
+    private const double MaxPedestrianLegKm = 1.8;
 
     public OptimizationResultDto Solve(
         IReadOnlyList<EngineerInputDto> engineers,
@@ -73,15 +75,34 @@ public class OrToolsVrpSolver
         var vehicleTransitCallbacks = new int[numVehicles];
         for (int v = 0; v < numVehicles; v++)
         {
+            var eng = engineers[v];
             long[,] vTime = timeMatrix[v];
-            int cb = routing.RegisterTransitCallback((long fromIndex, long toIndex) =>
+            double[,] vDist = distanceMatrix[v];
+            bool isPedestrian = eng.Transport == TransportType.Pedestrian;
+
+            // 1. Time callback (для Time dimension и временных окон)
+            int timeCb = routing.RegisterTransitCallback((long fromIndex, long toIndex) =>
             {
                 int fromNode = manager.IndexToNode(fromIndex);
                 int toNode = manager.IndexToNode(toIndex);
 
-                long travelTime = fromNode >= numMatrixPoints || toNode >= numMatrixPoints
-                    ? 0
-                    : vTime[fromNode, toNode];
+                if (fromNode >= numLocations || toNode >= numLocations)
+                    return 0;
+
+                // Для пешехода: переходы между точками длиннее 1.8 км физически запрещены
+                if (isPedestrian && fromNode >= numVehicles && fromNode < numMatrixPoints &&
+                    toNode >= numVehicles && toNode < numMatrixPoints)
+                {
+                    double legDist = vDist[fromNode, toNode];
+                    if (legDist > MaxPedestrianLegKm)
+                    {
+                        return MaxHorizonMinutes;
+                    }
+                }
+
+                long travelTime = (fromNode < numMatrixPoints && toNode < numMatrixPoints)
+                    ? vTime[fromNode, toNode]
+                    : 0;
 
                 long serviceTime = 0;
                 if (fromNode >= numVehicles && fromNode < numLocations)
@@ -91,8 +112,25 @@ public class OrToolsVrpSolver
 
                 return travelTime + serviceTime;
             });
-            vehicleTransitCallbacks[v] = cb;
-            routing.SetArcCostEvaluatorOfVehicle(cb, v);
+            vehicleTransitCallbacks[v] = timeCb;
+
+            // 2. Hybrid cost callback (взвешенная сумма реального расстояния и времени)
+            int costCb = routing.RegisterTransitCallback((long fromIndex, long toIndex) =>
+            {
+                int fromNode = manager.IndexToNode(fromIndex);
+                int toNode = manager.IndexToNode(toIndex);
+
+                if (fromNode >= numMatrixPoints || toNode >= numMatrixPoints)
+                    return 0;
+
+                double distKm = vDist[fromNode, toNode];
+                long travelTime = vTime[fromNode, toNode];
+
+                // 100 у.е. за каждый километр + 10 у.е. за каждую минуту в пути
+                return (long)Math.Round(distKm * 100.0) + (travelTime * 10);
+            });
+
+            routing.SetArcCostEvaluatorOfVehicle(costCb, v);
         }
 
         routing.SetFixedCostOfAllVehicles(VehicleFixedCost);
@@ -188,7 +226,11 @@ public class OrToolsVrpSolver
                 bool hasEquipment = ord.RequiredEquipment is not { Count: > 0 } ||
                                     (eng.Equipment != null && ord.RequiredEquipment.All(r => eng.Equipment.Contains(r)));
 
-                if (!hasSkill || !hasTransport || !hasEquipment)
+                // Для пешехода: запрещаем заявки, расположенные дальше 3.5 км от его депо/старта
+                bool isPedestrianTooFar = eng.Transport == TransportType.Pedestrian &&
+                                          distanceMatrix[i][i, numVehicles + j] > MaxPedestrianFromDepotKm;
+
+                if (!hasSkill || !hasTransport || !hasEquipment || isPedestrianTooFar)
                 {
                     routing.VehicleVar(index).RemoveValue(i);
                 }
@@ -217,6 +259,7 @@ public class OrToolsVrpSolver
         RoutingSearchParameters searchParameters = operations_research_constraint_solver.DefaultRoutingSearchParameters();
         searchParameters.FirstSolutionStrategy = FirstSolutionStrategy.Types.Value.ParallelCheapestInsertion;
         searchParameters.LocalSearchMetaheuristic = LocalSearchMetaheuristic.Types.Value.GuidedLocalSearch;
+        searchParameters.GuidedLocalSearchLambdaCoefficient = 0.25;
         searchParameters.TimeLimit = new Google.Protobuf.WellKnownTypes.Duration
         {
             Seconds = Math.Max(1, timeLimitSeconds > 0 ? timeLimitSeconds : DefaultTimeLimitSeconds)
@@ -255,7 +298,7 @@ public class OrToolsVrpSolver
 
         return BuildResponse(
             planId, planDate,
-            engineers, orders, lunchVehicleByStop, serviceByStop,
+            engineers, orders, lunchWindows, lunchVehicleByStop, serviceByStop,
             manager, routing, solution, timeDimension,
             distanceMatrix, timeMatrix, baseTime, preUnassigned);
     }
@@ -303,6 +346,7 @@ public class OrToolsVrpSolver
         DateTimeOffset planDate,
         IReadOnlyList<EngineerInputDto> engineers,
         IReadOnlyList<WorkOrderInputDto> orders,
+        IReadOnlyList<LunchWindow?> lunchWindows,
         IReadOnlyList<int> lunchVehicleByStop,
         int[] serviceByStop,
         RoutingIndexManager manager,
@@ -325,7 +369,7 @@ public class OrToolsVrpSolver
         int numMatrixPoints = numVehicles + numOrders;
 
        
-        var globalBaseline = BaselinePlanner.ComputeGlobal(engineers, orders, distanceMatrix, timeMatrix);
+        var globalBaseline = BaselinePlanner.ComputeGlobal(engineers, orders, distanceMatrix, timeMatrix, lunchWindows);
         var ordersVisitedByEngineer = new int[numVehicles];
 
         double totalDistance = 0;
@@ -405,7 +449,7 @@ public class OrToolsVrpSolver
                         DistanceFromPrevKm: Math.Round(legKm, 2),
                         TaskType: order.TaskType ?? "Maintenance",
                         Priority: order.Priority,
-                        AssignmentReason: "Оптимальное назначение по квалификации и маршруту",
+                        AssignmentReason: $"Назначен {eng.Name} ({eng.Transport}): квалификация {order.RequiredSkill}, доезд {(int)physicalTravel} мин ({Math.Round(legKm, 1)} км)",
                         Status: OrderStatus.Dispatched,
                         OrderId: order.InternalId));
 
@@ -458,6 +502,14 @@ public class OrToolsVrpSolver
         }
 
         double baselineDistance = globalBaseline.TotalDistanceKm;
+        if (baselineDistance <= 0 || (globalBaseline.AssignedOrders < totalAssignedOrders && routes.Count > 0))
+        {
+            var sumRouteBaselines = routes.Sum(r => r.BaselineDistanceKm);
+            if (sumRouteBaselines > 0)
+            {
+                baselineDistance = sumRouteBaselines;
+            }
+        }
         double savedPercent = baselineDistance > 0 ? (baselineDistance - totalDistance) / baselineDistance * 100 : 0;
 
         var metrics = new PlanComparisonMetricsDto(

@@ -24,7 +24,8 @@ public static class BaselinePlanner
         IReadOnlyList<EngineerInputDto> engineers,
         IReadOnlyList<WorkOrderInputDto> orders,
         double[][,] distanceKm,
-        long[][,] timeMinutes)
+        long[][,] timeMinutes,
+        IReadOnlyList<LunchWindow?>? lunchWindows = null)
     {
         int vCount = engineers.Count;
         int oCount = orders.Count;
@@ -71,6 +72,7 @@ public static class BaselinePlanner
         {
             int bestVehicle = -1;
             long bestTravel = long.MaxValue;
+            long bestServiceStart = 0;
 
             for (int v = 0; v < vCount; v++)
             {
@@ -100,38 +102,58 @@ public static class BaselinePlanner
                     continue;
                 }
 
-                long travel = timeMinutes[v][lastPoint[v], OrderNode(index)];
-                long arrive = Math.Max(cumulMinutes[v] + travel, ShiftStart(v));
-                long serveEnd = arrive + order.DurationMinutes;
-
-                // Обязательный обед: визит (и переезд к нему) не должен пересекать обеденный интервал.
-                if (eng.LunchStart != null && eng.LunchEnd != null)
+                // Физические ограничения пешехода: максимум 3.5 км от депо и 2.0 км на один переход
+                if (eng.Transport == TransportType.Pedestrian)
                 {
-                    long lunchStart = (long)(eng.LunchStart.Value - baseTime).TotalMinutes;
-                    long lunchEnd = (long)(eng.LunchEnd.Value - baseTime).TotalMinutes;
-                    bool fullyBefore = serveEnd <= lunchStart;
-                    bool fullyAfter = arrive >= lunchEnd;
-                    if (!fullyBefore && !fullyAfter)
+                    double legDist = distanceKm[v][lastPoint[v], OrderNode(index)];
+                    double depotDist = distanceKm[v][v, OrderNode(index)];
+                    if (legDist > 2.0 || depotDist > 3.5)
                     {
                         continue;
                     }
                 }
 
-                // Окно заявки: выполнение целиком в окне (ServiceStart ≥ WindowStart, ServiceEnd ≤ WindowEnd).
-                long? ws = WindowStart(index);
-                long? we = WindowEnd(index);
-                if (ws.HasValue && arrive < ws.Value)
+                long travel = timeMinutes[v][lastPoint[v], OrderNode(index)];
+                long arrive = Math.Max(cumulMinutes[v] + travel, ShiftStart(v));
+                long ws = WindowStart(index) ?? 0;
+                long serviceStart = Math.Max(arrive, ws);
+                long serveEnd = serviceStart + order.DurationMinutes;
+
+                // Обязательный обед: визит не должен пересекать обеденный интервал бригады.
+                var lunch = lunchWindows != null && v < lunchWindows.Count ? lunchWindows[v] : null;
+                if (lunch == null && eng.LunchStart != null && eng.LunchEnd != null)
                 {
-                    continue;
+                    lunch = new LunchWindow(eng.LunchStart.Value, eng.LunchEnd.Value, eng.LunchDurationMinutes);
                 }
 
+                if (lunch != null)
+                {
+                    long lunchStart = (long)(lunch.Start - baseTime).TotalMinutes;
+                    long lunchEnd = (long)(lunch.End - baseTime).TotalMinutes;
+
+                    // Если приехали до обеда, но обслуживание наползает на обед — переносим начало на после обеда
+                    if (serviceStart < lunchStart && serveEnd > lunchStart)
+                    {
+                        serviceStart = Math.Max(lunchEnd, ws);
+                        serveEnd = serviceStart + order.DurationMinutes;
+                    }
+                    else if (serviceStart >= lunchStart && serviceStart < lunchEnd)
+                    {
+                        // Прибыли во время обеда — ждём окончания обеда
+                        serviceStart = Math.Max(lunchEnd, ws);
+                        serveEnd = serviceStart + order.DurationMinutes;
+                    }
+                }
+
+                // Окно заявки: выполнение целиком в окне (ServiceStart >= WindowStart, ServiceEnd <= WindowEnd)
+                long? we = WindowEnd(index);
                 if (we.HasValue && serveEnd > we.Value)
                 {
                     continue;
                 }
 
-                // Смена бригады.
-                if (arrive > ShiftEnd(v) || serveEnd > ShiftEnd(v))
+                // Смена бригады: окончание работ должно укладываться в смену
+                if (serviceStart > ShiftEnd(v) || serveEnd > ShiftEnd(v))
                 {
                     continue;
                 }
@@ -140,6 +162,7 @@ public static class BaselinePlanner
                 {
                     bestTravel = travel;
                     bestVehicle = v;
+                    bestServiceStart = serviceStart;
                 }
             }
 
@@ -150,8 +173,7 @@ public static class BaselinePlanner
 
             totalDistance += distanceKm[bestVehicle][lastPoint[bestVehicle], OrderNode(index)];
             lastPoint[bestVehicle] = OrderNode(index);
-            cumulMinutes[bestVehicle] = Math.Max(cumulMinutes[bestVehicle] + bestTravel, ShiftStart(bestVehicle))
-                                        + order.DurationMinutes;
+            cumulMinutes[bestVehicle] = bestServiceStart + order.DurationMinutes;
             visited[bestVehicle]++;
         }
 
@@ -170,7 +192,8 @@ public static class BaselinePlanner
     }
 
     /// <summary>
-    /// Дистанция маршрута ближайшего соседа по назначенным бригаде заявкам (для BaselineDistanceKm в отчёте).
+    /// Дистанция базового (наивного) маршрута бригады: обход назначенных заявок в хронологическом
+    /// порядке их временных окон (Earliest Deadline First) без комбинаторной оптимизации перестановок.
     /// </summary>
     public static double ComputeRouteBaseline(
         int vehicle,
@@ -184,32 +207,18 @@ public static class BaselinePlanner
             return 0;
         }
 
-        var remaining = new HashSet<int>(assignedOrderIndexes);
+        var chronological = assignedOrderIndexes
+            .OrderBy(idx => orders[idx].WindowStart ?? orders[idx].WindowEnd ?? DateTimeOffset.MaxValue)
+            .ThenBy(idx => orders[idx].ExternalId, StringComparer.Ordinal)
+            .ToList();
+
         int current = vehicle;
         double total = 0;
 
-        while (remaining.Count > 0)
+        foreach (int orderIndex in chronological)
         {
-            int best = -1;
-            double bestDistance = double.MaxValue;
-            foreach (int orderIndex in remaining)
-            {
-                double d = distanceKm[current, numVehicles + orderIndex];
-                if (d < bestDistance)
-                {
-                    bestDistance = d;
-                    best = orderIndex;
-                }
-            }
-
-            if (best < 0)
-            {
-                break;
-            }
-
-            total += bestDistance;
-            current = numVehicles + best;
-            remaining.Remove(best);
+            total += distanceKm[current, numVehicles + orderIndex];
+            current = numVehicles + orderIndex;
         }
 
         return total;

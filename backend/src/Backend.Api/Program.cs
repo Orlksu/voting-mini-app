@@ -47,6 +47,7 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 // Хранилище задач оптимизации (in-memory)
 builder.Services.AddSingleton<OptimizationJobStore>();
 builder.Services.AddSingleton<OrderImportJobStore>();
+builder.Services.AddSingleton<EngineerImportJobStore>();
 
 // Подключаем движок маршрутизации с адресом Valhalla
 var valhallaUrl = builder.Configuration["Valhalla:BaseUrl"] ?? "http://valhalla:8002";

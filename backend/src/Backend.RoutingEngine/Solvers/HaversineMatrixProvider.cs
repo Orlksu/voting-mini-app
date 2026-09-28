@@ -9,8 +9,6 @@ namespace Backend.RoutingEngine.Solvers;
 /// </summary>
 public sealed class HaversineMatrixProvider : IRouteMatrixProvider
 {
-    private const double AverageSpeedKmh = 30.0;
-
     private const double EarthRadiusKm = 6371.0;
 
     public Task<RouteMatrices> BuildAsync(
@@ -22,7 +20,6 @@ public sealed class HaversineMatrixProvider : IRouteMatrixProvider
         int vehicles = vehicleTransports.Count;
 
         var baseDistance = new double[count, count];
-        var baseTime = new long[count, count];
 
         for (int i = 0; i < count; i++)
         {
@@ -34,20 +31,44 @@ public sealed class HaversineMatrixProvider : IRouteMatrixProvider
 
                 double d = HaversineKm(locations[i].Lat, locations[i].Lon, locations[j].Lat, locations[j].Lon);
                 baseDistance[i, j] = Math.Round(d, 2);
-                baseTime[i, j] = (long)Math.Ceiling(d / AverageSpeedKmh * 60.0);
             }
         }
 
         var distances = new double[vehicles][,];
         var times = new long[vehicles][,];
+
         for (int v = 0; v < vehicles; v++)
         {
             distances[v] = (double[,])baseDistance.Clone();
-            times[v] = (long[,])baseTime.Clone();
+
+            var vTime = new long[count, count];
+            double speedKmh = GetAverageSpeedKmh(vehicleTransports[v]);
+
+            for (int i = 0; i < count; i++)
+            {
+                for (int j = 0; j < count; j++)
+                {
+                    if (i == j) continue;
+
+                    double dist = baseDistance[i, j];
+                    vTime[i, j] = (long)Math.Ceiling(dist / speedKmh * 60.0);
+                }
+            }
+
+            times[v] = vTime;
         }
 
         return Task.FromResult(new RouteMatrices(distances, times));
     }
+
+    private static double GetAverageSpeedKmh(TransportType transport) => transport switch
+    {
+        TransportType.Car => 28.0,
+        TransportType.PublicTransit => 18.0,
+        TransportType.Bicycle => 14.0,
+        TransportType.Pedestrian => 4.5,
+        _ => 25.0
+    };
 
     private static double HaversineKm(double lat1, double lon1, double lat2, double lon2)
     {

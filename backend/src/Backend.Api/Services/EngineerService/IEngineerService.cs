@@ -10,7 +10,15 @@ public interface IEngineerService
     Task<Engineer> AddAsync(string district, EngineerInputDto engineer, CancellationToken ct = default);
     Task<List<Engineer>> AddRangeAsync(string district, IEnumerable<EngineerInputDto> engineers, CancellationToken ct = default);
 
-    Task<EngineerImportResultDto> ImportEngineersAsync(List<EngineerCsvRowDto> rawEngineers,
+    Task<EngineerImportResultDto> ImportEngineersAsync(
+        List<EngineerCsvRowDto> rawEngineers,
+        IProgress<(int Processed, int Total, string Stage)>? progress = null,
+        CancellationToken ct = default);
+
+    Task<EngineerImportResultDto> ImportEngineersFromPayloadAsync(
+        byte[] content,
+        string fileName,
+        IProgress<(int Processed, int Total, string Stage)>? progress = null,
         CancellationToken ct = default);
     Task<bool> DeleteEngineerAsync(string externalId, CancellationToken ct = default);
     Task<bool> DeleteEngineerByIdentifierAsync(string identifier, CancellationToken ct = default);
