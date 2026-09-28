@@ -1,13 +1,26 @@
 import styles from './Main.module.css'
 import { RoutingMap } from '../../components/map/RoutingMap'
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import Header from '../../components/Header/Header.tsx'
 import EngineerList from '../../components/EngineerList/EngineerList.tsx'
+import RequestsModal from '../../components/RequestsModal/RequestsModal.tsx'
+import UploadCsvModal from '../../components/UploadCsvModal/UploadCsvModal.tsx'
+import ImportProgress from '../../components/ImportProgress/ImportProgress.tsx'
 import { engineersApi } from '../../logic/engineerApi'
 import type { Engineer } from '../../types/engineer'
 import type { WorkOrder } from '../../types/workOrder.ts'
 import { orderApi } from '../../logic/orderApi.ts'
 import type { EngineerRoute } from '../../types/engineerRoute.ts'
+
+const IMPORT_JOB_STORAGE_KEY = 'importJobId'
+
+function readStoredImportJobId(): string | null {
+  try {
+    return localStorage.getItem(IMPORT_JOB_STORAGE_KEY)
+  } catch {
+    return null
+  }
+}
 
 export default function Main() {
   const [engineers, setEngineers] = useState<Engineer[]>([])
@@ -18,7 +31,13 @@ export default function Main() {
   )
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [isBrigadesOpen, setIsBrigadesOpen] = useState(false)
+  const [activePanel, setActivePanel] = useState<'brigades' | 'requests' | null>(null)
+  const isBrigadesOpen = activePanel === 'brigades'
+  const isRequestsOpen = activePanel === 'requests'
+  const [isUploadModalOpen, setIsUploadModalOpen] = useState(false)
+  const [importJobId, setImportJobId] = useState<string | null>(
+    readStoredImportJobId,
+  )
 
   useEffect(() => {
     const controller = new AbortController()
@@ -77,13 +96,39 @@ export default function Main() {
     }
   }, [activeEngineerId])
 
+  const reloadOrders = useCallback(async () => {
+    setOrders(await orderApi.getAll())
+  }, [])
+
+  useEffect(() => {
+    try {
+      if (importJobId) {
+        localStorage.setItem(IMPORT_JOB_STORAGE_KEY, importJobId)
+      } else {
+        localStorage.removeItem(IMPORT_JOB_STORAGE_KEY)
+      }
+    } catch {
+      // localStorage недоступен (приватный режим) — прогресс просто не переживёт перезагрузку
+    }
+  }, [importJobId])
+
+  const handleUploaded = (jobId: string) => {
+    setIsUploadModalOpen(false)
+    setImportJobId(jobId)
+  }
+
   const handleActiveEngineerChange = (engineerId: string | null) => {
     setActiveEngineerId(engineerId)
     setEngineerRoute(null)
   }
 
   const handleCloseBrigades = () => {
-    setIsBrigadesOpen(false)
+    setActivePanel(null)
+    handleActiveEngineerChange(null)
+  }
+
+  const handleRequestsClick = () => {
+    setActivePanel('requests')
     handleActiveEngineerChange(null)
   }
 
@@ -122,8 +167,11 @@ export default function Main() {
       <div className={styles.overlayLayer}>
         <Header
           isBrigadesOpen={isBrigadesOpen}
-          onBrigadesClick={() => setIsBrigadesOpen(true)}
+          onBrigadesClick={() => setActivePanel('brigades')}
           onCloseBrigades={handleCloseBrigades}
+          isRequestsOpen={isRequestsOpen}
+          onRequestsClick={handleRequestsClick}
+          onUploadFileClick={() => setIsUploadModalOpen(true)}
         />
         <div className={styles.contentLayer}>
           {isBrigadesOpen && (
@@ -137,6 +185,30 @@ export default function Main() {
           )}
         </div>
       </div>
+
+      <RequestsModal
+        isOpen={isRequestsOpen}
+        onClose={() => setActivePanel(null)}
+      />
+
+      <UploadCsvModal
+        isOpen={isUploadModalOpen}
+        onClose={() => setIsUploadModalOpen(false)}
+        onUploaded={handleUploaded}
+      />
+
+      {importJobId && (
+        <ImportProgress
+          key={importJobId}
+          jobId={importJobId}
+          onCompleted={reloadOrders}
+          onClose={() => setImportJobId(null)}
+          onShowOrders={() => {
+            setImportJobId(null)
+            handleRequestsClick()
+          }}
+        />
+      )}
     </div>
   )
 }

@@ -1,7 +1,7 @@
 .headerContainer {
   pointer-events: auto;
 
-  background-color: rgb(var(--color-ink) / 0.8);
+  background-color: rgb(27,26,26, 0.8);
 
   display: flex;
   justify-content: space-between;
@@ -14,23 +14,36 @@
 
   nav {
     display: flex;
-    gap: 15px;
+    background: #292929;
+    padding: 7px 10px;
+    border-radius: 30px;
+    gap: 10px;
 
-    button {
-      padding: 0;
-
-      color: white;
-      background: transparent;
-      border: 0;
+    p {
       cursor: pointer;
-      font: inherit;
-      font-size: 24px;
+      font-size: 20px;
+      color: #B3B3B3;
+      padding: 5px 45px;
+      border-radius: 30px;
+    }
+
+    .active {
+      background: #FBB72C;
+      color: #0F0F0F;
+      transition: 0.2s all ease-in-out;
     }
   }
 
   .uploadCsv {
-    font-size: 24px;
-    color: white;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 20px;
+    color: #B3B3B3;
+    background: #101010;
+    padding: 12px 24px;
+    border-radius: 30px;
   }
 }
 
@@ -63,4 +76,103 @@
   font-weight: 900;
   font-size: 45px;
   font-family: var(--font-mono), monospace;
+}
+
+.buttons {
+  align-items: center;
+  display: flex;
+  gap: 16px;
+
+  align-self: stretch;
+  margin: -5px 0;
+}
+
+.upload {
+  position: relative;
+  display: flex;
+  align-items: center;
+  align-self: stretch;
+}
+
+.headerContainer .upload .uploadCsv {
+  position: relative;
+  z-index: 1;
+}
+
+.uploadOpen::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: #101010;
+}
+
+.uploadOpen::before {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: -20px;
+  width: 20px;
+  height: 20px;
+  background: radial-gradient(circle at 0 0, transparent 20px, #101010 20.5px);
+}
+
+.chevron {
+  transition: transform 0.2s ease-in-out;
+}
+
+.chevronUp {
+  transform: rotate(180deg);
+}
+
+.uploadMenu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: 10;
+  min-width: calc(100% + 80px);
+  padding: 15px;
+
+  background: #101010;
+  border-radius: 20px 0 20px 20px;
+
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity 0.2s ease-in-out,
+    visibility 0.2s;
+}
+
+.uploadMenuOpen {
+  opacity: 1;
+  visibility: visible;
+}
+
+.uploadMenuInner {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 15px;
+
+  background: rgba(37, 37, 37, 1);
+  border-radius: 15px;
+
+  p {
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+
+    font-size: 18px;
+    color: white;
+    white-space: nowrap;
+    transition: color 0.2s ease-in-out;
+  }
+
+  p:hover {
+    color: rgb(234, 190, 95);
+  }
 }

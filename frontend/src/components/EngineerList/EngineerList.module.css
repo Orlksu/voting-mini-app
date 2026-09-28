@@ -29,8 +29,14 @@
   overflow-y: auto;
   overflow-x: hidden;
   scrollbar-gutter: stable;
-  scrollbar-color: #eabe5f transparent;
-  scrollbar-width: auto;
+  padding-right: 15px;
+}
+
+/* Firefox не поддерживает ::-webkit-scrollbar, там только цвет */
+@supports not selector(::-webkit-scrollbar) {
+  .listScrollViewport {
+    scrollbar-color: #eabe5f transparent;
+  }
 }
 
 .listScrollViewport::-webkit-scrollbar {

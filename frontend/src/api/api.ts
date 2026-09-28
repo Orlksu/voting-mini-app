@@ -15,14 +15,20 @@ api.interceptors.response.use(
       return Promise.reject(error)
     }
 
+    const data: unknown = error.response?.data
     const serverMessage =
-      typeof error.response?.data?.message === 'string'
-        ? error.response.data.message
-        : null
+      typeof data === 'string' && data.length > 0
+        ? data
+        : typeof data === 'object' &&
+            data !== null &&
+            'message' in data &&
+            typeof data.message === 'string'
+          ? data.message
+          : null
     const message =
-      serverMessage ??
-      error.response?.statusText ??
-      error.message ??
+      serverMessage ||
+      error.response?.statusText ||
+      error.message ||
       'Ошибка сетевого запроса'
 
     return Promise.reject(new Error(message, { cause: error }))
