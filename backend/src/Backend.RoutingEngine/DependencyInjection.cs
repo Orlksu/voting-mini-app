@@ -13,11 +13,13 @@ public static class DependencyInjection
         services.AddHttpClient<IValhallaClient, ValhallaClient>(client =>
         {
             client.BaseAddress = new Uri(valhallaBaseUrl);
-            client.Timeout = TimeSpan.FromSeconds(10);
+            client.Timeout = TimeSpan.FromSeconds(5);
         });
 
         services.AddScoped<OrToolsVrpSolver>();
         services.AddScoped<MockRouteOptimizer>();
+        services.AddSingleton<HaversineMatrixProvider>();
+        services.AddScoped<IRouteMatrixProvider, ValhallaMatrixProvider>();
         services.AddScoped<IRouteOptimizer, RouteOptimizer>();
         return services;
     }

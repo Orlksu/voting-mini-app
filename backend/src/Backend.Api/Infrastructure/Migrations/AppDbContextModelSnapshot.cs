@@ -151,6 +151,11 @@ namespace Backend.Api.Infrastructure.Migrations
                     b.Property<double?>("BaselineDistanceKm")
                         .HasColumnType("double precision");
 
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("NOW()");
+
                     b.Property<string>("EncodedPolyline")
                         .HasColumnType("text");
 
@@ -174,6 +179,8 @@ namespace Backend.Api.Infrastructure.Migrations
                         .HasColumnType("integer");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("CreatedAt");
 
                     b.HasIndex("EngineerId");
 
@@ -216,6 +223,11 @@ namespace Backend.Api.Infrastructure.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("NOW()");
+
                     b.Property<Guid>("JobId")
                         .HasColumnType("uuid");
 
@@ -256,6 +268,8 @@ namespace Backend.Api.Infrastructure.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("CreatedAt");
+
                     b.ToTable("OperationResults");
                 });
 
@@ -282,6 +296,9 @@ namespace Backend.Api.Infrastructure.Migrations
                         .IsRequired()
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)");
+
+                    b.Property<Guid?>("OrderId")
+                        .HasColumnType("uuid");
 
                     b.Property<int>("Sequence")
                         .HasColumnType("integer");
@@ -323,7 +340,10 @@ namespace Backend.Api.Infrastructure.Migrations
 
                     b.HasIndex("ExternalOrderId");
 
-                    b.HasIndex("EngineerRouteId", "Sequence");
+                    b.HasIndex("OrderId");
+
+                    b.HasIndex("EngineerRouteId", "Sequence")
+                        .IsUnique();
 
                     b.ToTable("RouteStops");
                 });
@@ -363,6 +383,10 @@ namespace Backend.Api.Infrastructure.Migrations
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
+
+                    b.Property<string>("CancellationReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
 
                     b.Property<Guid?>("DepotId")
                         .HasColumnType("uuid");

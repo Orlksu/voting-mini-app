@@ -18,10 +18,25 @@ public class OrderImportJobStore
         public string? ErrorMessage { get; set; }
     }
 
+    private const int MaxCapacity = 200;
     private readonly ConcurrentDictionary<Guid, ImportJob> _jobs = new();
 
     public OrderImportJobStatusDto Create(int initialTotal = 0)
     {
+        if (_jobs.Count >= MaxCapacity)
+        {
+            var oldJobs = _jobs.Values
+                .Where(j => j.Status is JobStatus.Completed or JobStatus.Failed)
+                .OrderBy(j => j.CreatedAt)
+                .Take(_jobs.Count - MaxCapacity + 10)
+                .ToList();
+
+            foreach (var old in oldJobs)
+            {
+                _jobs.TryRemove(old.JobId, out _);
+            }
+        }
+
         var job = new ImportJob
         {
             JobId = Guid.NewGuid(),

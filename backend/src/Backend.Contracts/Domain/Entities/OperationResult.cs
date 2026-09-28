@@ -7,6 +7,7 @@ public class OperationResult
     public Guid Id { get; init; } = Guid.NewGuid();
     public Guid JobId { get; set; }
     public DateTimeOffset PlanDate { get; set; }
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public PlanMetrics Metrics { get; set; } = null!;
     public List<EngineerRoute> Routes { get; set; } = [];
     public List<UnassignedOrder> UnassignedOrders { get; set; } = [];

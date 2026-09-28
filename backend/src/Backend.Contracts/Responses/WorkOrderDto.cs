@@ -17,4 +17,5 @@ public record WorkOrderDto(
     OrderPriority Priority,
     OrderStatus Status,
     string TaskType,
-    Guid? DepotId);
+    Guid? DepotId,
+    string? CancellationReason = null);

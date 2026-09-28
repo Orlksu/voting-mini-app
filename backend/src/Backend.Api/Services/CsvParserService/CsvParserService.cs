@@ -55,6 +55,11 @@ public class CsvParserService : ICsvParserService
             if (string.IsNullOrWhiteSpace(record.Address))
                 continue;
 
+            if (string.IsNullOrWhiteSpace(record.ExternalId))
+            {
+                record.ExternalId = $"WO-IMP-{Guid.NewGuid():N}"[..15].ToUpperInvariant();
+            }
+
             orders.Add(record);
         }
 

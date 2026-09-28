@@ -5,10 +5,20 @@ namespace Backend.Api.Infrastructure.Repositories;
 
 public interface IWorkOrderRepository
 {
+    Task AddAsync(WorkOrder order, CancellationToken ct = default);
     Task AddRangeAsync(IEnumerable<WorkOrder> orders, CancellationToken ct = default);
     Task<List<WorkOrder>> GetAllAsync(CancellationToken ct = default);
+    Task<WorkOrder?> GetByIdAsync(Guid id, CancellationToken ct = default);
+    Task<List<WorkOrder>> GetByIdsAsync(IEnumerable<Guid> ids, CancellationToken ct = default);
+    Task<WorkOrder?> GetByExternalIdAsync(string externalId, CancellationToken ct = default);
+    Task<WorkOrder?> GetByExternalIdAndDistrictAsync(string externalId, string district, CancellationToken ct = default);
+    Task<List<WorkOrder>> FindByIdentifierAsync(string identifier, string? district = null, CancellationToken ct = default);
     Task<List<WorkOrder>> GetByExternalIdsAsync(IEnumerable<string> externalIds, CancellationToken ct = default);
+    Task<List<WorkOrder>> GetByExternalIdsAndDistrictsAsync(IEnumerable<(string ExternalId, string? District)> orders, CancellationToken ct = default);
+    Task<List<WorkOrder>> GetPendingOrdersForPlanningAsync(Guid? depotId = null, string? district = null, DateTimeOffset? targetDate = null, OrderStatus? status = null, CancellationToken ct = default);
     Task<List<WorkOrder>> GetNotDispatchedByDepotIdAsync(Guid depotId, CancellationToken ct = default);
     Task<List<WorkOrder>> GetNotDispatchedByDistrictAsync(string district, CancellationToken ct = default);
     Task UpdateStatusesAsync(IEnumerable<Guid> orderIds, OrderStatus newStatus, CancellationToken ct = default);
+    Task UpdateAsync(WorkOrder order, CancellationToken ct = default);
+    Task<bool> DeleteAsync(WorkOrder order, CancellationToken ct = default);
 }

@@ -7,12 +7,17 @@ public record EngineerRouteDto(
     string EngineerName,
     TransportType Transport,
     int TotalOrders,
+    int ActiveOrdersCount,
+    int CompletedOrdersCount,
+    int CancelledOrdersCount,
     double TotalDistanceKm,
     double BaselineDistanceKm,
     int TotalTravelMinutes,
     List<RouteStopDto> Stops,
     string? EncodedPolyline,
+    List<BreakStopDto> BreakStops,
     string? StartAddress = null,
     double? StartLatitude = null,
-    double? StartLongitude = null
+    double? StartLongitude = null,
+    string? RouteGeoJson = null
 );

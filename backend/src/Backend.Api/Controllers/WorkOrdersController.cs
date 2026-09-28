@@ -1,8 +1,10 @@
 using Backend.Api.Services;
 using Backend.Api.Services.Common;
 using Backend.Api.Services.WorkOrderService;
+using Backend.Contracts.Requests;
 using Backend.Contracts.Responses;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.ModelBinding;
 
 namespace Backend.Api.Controllers;
 
@@ -18,6 +20,166 @@ public class WorkOrdersController(
     [ProducesResponseType<List<WorkOrderDto>>(StatusCodes.Status200OK)]
     public async Task<IActionResult> GetAll(CancellationToken ct)
         => Ok(await workOrderService.GetAllAsync(ct));
+
+    /// <summary>
+    /// Создание новой заявки на обслуживание вручную через JSON с автоматическим геокодированием и привязкой к офису/депо.
+    /// </summary>
+    /// <param name="request">Параметры создаваемой заявки.</param>
+    /// <param name="ct">Токен отмены запроса.</param>
+    /// <response code="201">Заявка успешно создана.</response>
+    /// <response code="400">Ошибка валидации входных данных или невозможность определить координаты.</response>
+    /// <response code="409">Конфликт: заявка с таким идентификатором в указанном районе уже существует.</response>
+    [HttpPost]
+    [ProducesResponseType<WorkOrderDto>(StatusCodes.Status201Created)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> Create([FromBody] CreateWorkOrderRequest request, CancellationToken ct)
+    {
+        try
+        {
+            var created = await workOrderService.CreateAsync(request, ct);
+            return CreatedAtAction(nameof(GetByIdentifier), new { id = created.Id }, created);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(ex.Message);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Получение информации о конкретной заявке по Id (Guid) или внешнему номеру (ExternalId).
+    /// </summary>
+    /// <param name="id">Внутренний Guid заявки или строковый ExternalId.</param>
+    /// <param name="district">Опциональный район (District) для однозначной идентификации при поиске по ExternalId.</param>
+    /// <param name="ct">Токен отмены запроса.</param>
+    /// <response code="200">Информация о заявке найдена.</response>
+    /// <response code="400">Найдено несколько заявок с таким ExternalId в разных районах (требуется указать district).</response>
+    /// <response code="404">Заявка не найдена.</response>
+    [HttpGet("{id}")]
+    [ProducesResponseType<WorkOrderDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetByIdentifier(string id, [FromQuery] string? district, CancellationToken ct)
+    {
+        try
+        {
+            var order = await workOrderService.GetByIdentifierAsync(id, district, ct);
+            return order is null ? NotFound("Заявка не найдена.") : Ok(order);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Удаление заявки по Id (Guid) или внешнему номеру (ExternalId).
+    /// Разрешено удалять только нераспределенные заявки (NotDispatched).
+    /// </summary>
+    /// <param name="id">Внутренний Guid заявки или строковый ExternalId.</param>
+    /// <param name="district">Опциональный район (District) для точной идентификации при удалении по ExternalId.</param>
+    /// <param name="ct">Токен отмены запроса.</param>
+    /// <response code="204">Заявка успешно удалена.</response>
+    /// <response code="400">Нельзя удалить распределенную заявку или найдено несколько заявок с таким ExternalId.</response>
+    /// <response code="404">Заявка не найдена.</response>
+    [HttpDelete("{id}")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> Delete(string id, [FromQuery] string? district, CancellationToken ct)
+    {
+        try
+        {
+            var deleted = await workOrderService.DeleteByIdentifierAsync(id, district, ct);
+            return deleted ? NoContent() : NotFound("Заявка не найдена.");
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Отмена заявки на обслуживание с указанием причины отмены.
+    /// Завершенные (Completed) заявки отменить нельзя (400 Bad Request).
+    /// </summary>
+    /// <param name="id">Уникальный идентификатор заявки (Guid или уникальный ExternalId).</param>
+    /// <param name="district">Опциональный район (District) для однозначной идентификации при отмене по ExternalId.</param>
+    /// <param name="request">Тело запроса с опциональной причиной отмены.</param>
+    /// <param name="ct">Токен отмены запроса.</param>
+    /// <response code="200">Заявка успешно отменена.</response>
+    /// <response code="400">Ошибка валидации причины или попытка отменить завершенную заявку.</response>
+    /// <response code="404">Заявка не найдена.</response>
+    [HttpPost("{id}/cancel")]
+    [ProducesResponseType<WorkOrderDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> Cancel(
+        string id, 
+        [FromQuery] string? district = null,
+        [FromBody(EmptyBodyBehavior = EmptyBodyBehavior.Allow)] CancelWorkOrderRequest? request = null, 
+        CancellationToken ct = default)
+    {
+        try
+        {
+            var result = await workOrderService.CancelAsync(id, district, request?.Reason, ct);
+            return Ok(result);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(ex.Message);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(ex.Message);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Завершение выполнения заявки на обслуживание.
+    /// Отмененные (Cancelled) заявки завершить нельзя (400 Bad Request).
+    /// </summary>
+    /// <param name="id">Уникальный идентификатор заявки (Guid или уникальный ExternalId).</param>
+    /// <param name="district">Опциональный район (District) для однозначной идентификации при завершении по ExternalId.</param>
+    /// <param name="ct">Токен отмены запроса.</param>
+    /// <response code="200">Заявка успешно переведена в статус завершенной.</response>
+    /// <response code="400">Попытка завершить отмененную заявку или неоднозначный идентификатор.</response>
+    /// <response code="404">Заявка не найдена.</response>
+    [HttpPost("{id}/complete")]
+    [ProducesResponseType<WorkOrderDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> Complete(
+        string id, 
+        [FromQuery] string? district = null, 
+        CancellationToken ct = default)
+    {
+        try
+        {
+            var result = await workOrderService.CompleteAsync(id, district, ct);
+            return Ok(result);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(ex.Message);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(ex.Message);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ex.Message);
+        }
+    }
 
     /// <summary>
     /// Загрузка CSV-файлов с заявками на обслуживание и геокодирование адресов.

@@ -6,6 +6,7 @@ namespace Backend.Contracts.Requests;
 
 public record WorkOrderInputDto
 {
+    public Guid? InternalId { get; set; }
     public string ExternalId { get; set; } = string.Empty;
     public string? District { get; set; }
     public DepotDto? Depot { get; set; }
@@ -19,4 +20,6 @@ public record WorkOrderInputDto
     public OrderPriority Priority { get; set; }
     public string TaskType { get; set; } = string.Empty;
     public int DurationMinutes { get; set; } = 30;
+    public OrderStatus Status { get; set; } = OrderStatus.NotDispatched;
+    public List<string> RequiredEquipment { get; set; } = [];
 }

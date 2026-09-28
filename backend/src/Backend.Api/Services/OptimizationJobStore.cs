@@ -16,6 +16,7 @@ public class OptimizationJobStore
         public OptimizationResultDto? Result { get; set; }
     }
 
+    private const int MaxCapacity = 200;
     private readonly ConcurrentDictionary<Guid, Job> _jobs = new();
 
     public List<EngineerInputDto>? LastEngineers { get; private set; }
@@ -24,6 +25,20 @@ public class OptimizationJobStore
 
     public JobStatusResponseDto Create()
     {
+        if (_jobs.Count >= MaxCapacity)
+        {
+            var oldJobs = _jobs.Values
+                .Where(j => j.Status is JobStatus.Completed or JobStatus.Failed)
+                .OrderBy(j => j.CreatedAt)
+                .Take(_jobs.Count - MaxCapacity + 10)
+                .ToList();
+
+            foreach (var old in oldJobs)
+            {
+                _jobs.TryRemove(old.JobId, out _);
+            }
+        }
+
         var job = new Job { JobId = Guid.NewGuid(), CreatedAt = DateTimeOffset.UtcNow };
         _jobs[job.JobId] = job;
         return ToStatus(job);
@@ -77,6 +92,71 @@ public class OptimizationJobStore
 
         result = null;
         return false;
+    }
+
+    public void UpdateOrderStatus(string externalOrderId, OrderStatus newStatus)
+    {
+        if (string.IsNullOrWhiteSpace(externalOrderId))
+            return;
+
+        if (_lastResult != null)
+        {
+            var modifiedRoutes = _lastResult.Routes.Select(r =>
+            {
+                if (!r.Stops.Any(s => string.Equals(s.ExternalOrderId, externalOrderId, StringComparison.OrdinalIgnoreCase)))
+                    return r;
+
+                var updatedStops = r.Stops.Select(s =>
+                    string.Equals(s.ExternalOrderId, externalOrderId, StringComparison.OrdinalIgnoreCase)
+                        ? s with { Status = newStatus }
+                        : s
+                ).ToList();
+
+                var activeCount = updatedStops.Count(s => s.Status is OrderStatus.Dispatched or OrderStatus.InProgress);
+                var completedCount = updatedStops.Count(s => s.Status == OrderStatus.Completed);
+                var cancelledCount = updatedStops.Count(s => s.Status == OrderStatus.Cancelled);
+
+                return r with
+                {
+                    Stops = updatedStops,
+                    ActiveOrdersCount = activeCount,
+                    CompletedOrdersCount = completedCount,
+                    CancelledOrdersCount = cancelledCount
+                };
+            }).ToList();
+
+            _lastResult = _lastResult with { Routes = modifiedRoutes };
+        }
+
+        foreach (var job in _jobs.Values)
+        {
+            if (job.Result != null && job.Result.Routes.Any(r => r.Stops.Any(s => string.Equals(s.ExternalOrderId, externalOrderId, StringComparison.OrdinalIgnoreCase))))
+            {
+                var routes = job.Result.Routes.Select(r =>
+                {
+                    if (!r.Stops.Any(s => string.Equals(s.ExternalOrderId, externalOrderId, StringComparison.OrdinalIgnoreCase)))
+                        return r;
+
+                    var updatedStops = r.Stops.Select(s => string.Equals(s.ExternalOrderId, externalOrderId, StringComparison.OrdinalIgnoreCase)
+                        ? s with { Status = newStatus }
+                        : s).ToList();
+
+                    var activeCount = updatedStops.Count(s => s.Status is OrderStatus.Dispatched or OrderStatus.InProgress);
+                    var completedCount = updatedStops.Count(s => s.Status == OrderStatus.Completed);
+                    var cancelledCount = updatedStops.Count(s => s.Status == OrderStatus.Cancelled);
+
+                    return r with
+                    {
+                        Stops = updatedStops,
+                        ActiveOrdersCount = activeCount,
+                        CompletedOrdersCount = completedCount,
+                        CancelledOrdersCount = cancelledCount
+                    };
+                }).ToList();
+
+                job.Result = job.Result with { Routes = routes };
+            }
+        }
     }
 
     private static JobStatusResponseDto ToStatus(Job job) =>

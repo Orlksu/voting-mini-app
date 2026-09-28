@@ -6,7 +6,7 @@ namespace Backend.Api.Infrastructure.Repositories;
 public class EngineerRepository(AppDbContext db) : IEngineerRepository
 {
     public async Task<Engineer?> GetByExternalIdAsync(string id, CancellationToken ct = default)
-        => await db.Engineers.AsNoTracking().FirstOrDefaultAsync(e => e.ExternalId == id, ct);
+        => await db.Engineers.AsNoTracking().FirstOrDefaultAsync(e => EF.Functions.ILike(e.ExternalId, id.Trim()), ct);
     public async Task<Engineer?> GetByIdAsync(Guid id, CancellationToken ct = default)
         => await db.Engineers.AsNoTracking().FirstOrDefaultAsync(e => e.Id == id, ct);
 
@@ -25,6 +25,26 @@ public class EngineerRepository(AppDbContext db) : IEngineerRepository
             .Where(e => e.District == district && e.IsAvailable)
             .ToListAsync(ct);
 
+    public async Task<List<Engineer>> GetAvailableEngineersAsync(Guid? depotId = null, string? district = null, CancellationToken ct = default)
+    {
+        var query = db.Engineers
+            .AsNoTracking()
+            .Where(e => e.IsAvailable);
+
+        if (depotId.HasValue)
+        {
+            query = query.Where(e => e.DepotId == depotId.Value);
+        }
+
+        if (!string.IsNullOrWhiteSpace(district))
+        {
+            var trimmed = district.Trim();
+            query = query.Where(e => EF.Functions.ILike(e.District, trimmed));
+        }
+
+        return await query.ToListAsync(ct);
+    }
+
     public async Task AddAsync(Engineer engineer, CancellationToken ct = default)
     {
         await db.Engineers.AddAsync(engineer, ct);
@@ -37,18 +57,26 @@ public class EngineerRepository(AppDbContext db) : IEngineerRepository
         if (list.Count == 0)
             return;
 
-        var existing = await db.Engineers
-            .Where(e => list.Select(x => x.ExternalId).Contains(e.ExternalId))
-            .ToListAsync(ct);
-        var existingByExternalId = existing.ToDictionary(e => e.ExternalId);
+        var externalIds = list
+            .Select(x => x.ExternalId.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
 
-        var processed = new HashSet<string>();
+        var existing = await db.Engineers
+            .Where(e => externalIds.Contains(e.ExternalId))
+            .ToListAsync(ct);
+        var existingByExternalId = existing
+            .GroupBy(e => e.ExternalId.Trim(), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+
+        var processed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var engineer in list)
         {
-            if (!processed.Add(engineer.ExternalId))
+            var key = engineer.ExternalId.Trim();
+            if (!processed.Add(key))
                 continue;
 
-            if (existingByExternalId.TryGetValue(engineer.ExternalId, out var current))
+            if (existingByExternalId.TryGetValue(key, out var current))
             {
                 current.Name = engineer.Name;
                 current.District = engineer.District;
@@ -69,7 +97,7 @@ public class EngineerRepository(AppDbContext db) : IEngineerRepository
         await db.SaveChangesAsync(ct);
     }
     public async Task<int> DeleteEngineerAsync(string externalId, CancellationToken ct = default)
-        => await db.Engineers.Where(e => e.ExternalId == externalId).ExecuteDeleteAsync(ct);
+        => await db.Engineers.Where(e => EF.Functions.ILike(e.ExternalId, externalId.Trim())).ExecuteDeleteAsync(ct);
 
     public async Task UpdateAvailabilityAsync(Guid engineerId, bool isAvailable, CancellationToken ct = default)
         => await db.Engineers

@@ -1,7 +1,9 @@
 using Backend.Api.Infrastructure;
 using Backend.Api.Infrastructure.Repositories;
 using Backend.Api.Services;
+using Backend.Api.Services.Common;
 using Backend.Api.Services.CsvParserService;
+using Backend.Api.Services.DepotService;
 using Backend.Api.Services.EngineerService;
 using Backend.Api.Services.GeoCodingService;
 using Backend.Api.Services.WorkOrderService;
@@ -23,7 +25,11 @@ builder.Services.AddProblemDetails(options =>
 
 builder.Services.AddControllers()
     .AddJsonOptions(options =>
-        options.JsonSerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter()));
+    {
+        options.JsonSerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
+        options.JsonSerializerOptions.Converters.Add(new MskDateTimeOffsetJsonConverter());
+        options.JsonSerializerOptions.Converters.Add(new MskNullableDateTimeOffsetJsonConverter());
+    });
 builder.Services.AddOpenApi();
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {
@@ -41,6 +47,7 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 // Хранилище задач оптимизации (in-memory)
 builder.Services.AddSingleton<OptimizationJobStore>();
 builder.Services.AddSingleton<OrderImportJobStore>();
+builder.Services.AddSingleton<EngineerImportJobStore>();
 
 // Подключаем движок маршрутизации с адресом Valhalla
 var valhallaUrl = builder.Configuration["Valhalla:BaseUrl"] ?? "http://valhalla:8002";
@@ -54,6 +61,7 @@ builder.Services.AddScoped<IEngineerRepository, EngineerRepository>();
 builder.Services.AddScoped<IEngineerRouteRepository, EngineerRouteRepository>();
 builder.Services.AddScoped<IOperationResultRepository, OperationResultRepository>();
 builder.Services.AddScoped<IWorkOrderService, WorkOrderService>();
+builder.Services.AddScoped<IDepotService, DepotService>();
 builder.Services.AddScoped<IEngineerService, EngineerService>();
 builder.Services.AddScoped<IGeocodeCacheRepository, GeocodeCacheRepository>();
 builder.Services.AddHttpClient<IGeocoder, GeocoderService>((sp, client) =>

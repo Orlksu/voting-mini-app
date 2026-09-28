@@ -21,8 +21,10 @@ public class EngineerRouteConfiguration : IEntityTypeConfiguration<EngineerRoute
         builder.Property(x => x.EngineerExternalId).HasMaxLength(100);
         builder.Property(x => x.EngineerName).HasMaxLength(200);
         builder.Property(x => x.BaselineDistanceKm);
+        builder.Property(x => x.CreatedAt).HasDefaultValueSql("NOW()").IsRequired();
         builder.Property(x => x.EncodedPolyline).HasColumnType("text");
 
+        builder.HasIndex(x => x.CreatedAt);
         builder.HasIndex(x => x.EngineerId);
         builder.HasIndex(x => x.OperationResultId);
 

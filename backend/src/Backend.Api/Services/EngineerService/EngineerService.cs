@@ -1,3 +1,4 @@
+using Backend.Api.Services.CsvParserService;
 using System.Globalization;
 using Backend.Api.Infrastructure.Repositories;
 using Backend.Api.Services.GeoCodingService;
@@ -9,7 +10,7 @@ using Backend.Contracts.Responses;
 
 namespace Backend.Api.Services.EngineerService;
 
-public class EngineerService(IDepotRepository depots, IEngineerRepository engineers, IGeocoder geocoder) : IEngineerService
+public class EngineerService(IDepotRepository depots, IEngineerRepository engineers, IGeocoder geocoder, IEngineerCsvParser csvParser) : IEngineerService
 {
     public async Task<List<EngineerDto>> GetAllAsync(CancellationToken ct = default)
     {
@@ -100,7 +101,22 @@ public class EngineerService(IDepotRepository depots, IEngineerRepository engine
         return entities;
     }
 
-    public async Task<EngineerImportResultDto> ImportEngineersAsync(List<EngineerCsvRowDto> rawEngineers, CancellationToken ct = default)
+    public async Task<EngineerImportResultDto> ImportEngineersFromPayloadAsync(
+        byte[] content,
+        string fileName,
+        IProgress<(int Processed, int Total, string Stage)>? progress = null,
+        CancellationToken ct = default)
+    {
+        progress?.Report((0, 0, "Чтение и парсинг CSV файла инженеров..."));
+        using var stream = new MemoryStream(content);
+        var rows = await csvParser.ParseEngineersAsync(stream, ct);
+        return await ImportEngineersAsync(rows, progress, ct);
+    }
+
+    public async Task<EngineerImportResultDto> ImportEngineersAsync(
+        List<EngineerCsvRowDto> rawEngineers,
+        IProgress<(int Processed, int Total, string Stage)>? progress = null,
+        CancellationToken ct = default)
     {
         var warnings = new List<string>();
         var imported = 0;
@@ -123,8 +139,11 @@ public class EngineerService(IDepotRepository depots, IEngineerRepository engine
 
         if (addressesNeedingGeo.Count > 0)
         {
-            await geocoder.GeocodeBatchAsync(addressesNeedingGeo, ct);
+            progress?.Report((0, addressesNeedingGeo.Count, $"Геокодирование адресов инженеров (0 из {addressesNeedingGeo.Count})..."));
+            await geocoder.GeocodeBatchAsync(addressesNeedingGeo, progress, ct);
         }
+
+        progress?.Report((addressesNeedingGeo.Count, addressesNeedingGeo.Count, "Обработка и сохранение данных инженеров..."));
 
         foreach (var raw in rawEngineers)
         {
@@ -217,6 +236,7 @@ public class EngineerService(IDepotRepository depots, IEngineerRepository engine
         if (entities.Count > 0)
             await engineers.UpsertRangeAsync(entities, ct);
 
+        progress?.Report((rawEngineers.Count, rawEngineers.Count, "Импорт инженеров успешно завершен."));
         return new EngineerImportResultDto(imported, skipped, unresolved, depotsCreated, warnings);
     }
 
