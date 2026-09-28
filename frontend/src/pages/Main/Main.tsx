@@ -1,6 +1,6 @@
 import styles from './Main.module.css'
 import { RoutingMap } from '../../components/map/RoutingMap'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import Header from '../../components/Header/Header.tsx'
 import EngineerList from '../../components/EngineerList/EngineerList.tsx'
 import RequestsModal from '../../components/RequestsModal/RequestsModal.tsx'
@@ -70,6 +70,14 @@ export default function Main() {
   )
   const [optimizationResult, setOptimizationResult] =
     useState<OptimizationResult | null>(null)
+  const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null)
+  const [selectedOrderEngineerId, setSelectedOrderEngineerId] = useState<
+    string | null
+  >(null)
+  const [isResolvingOrderEngineer, setIsResolvingOrderEngineer] =
+    useState(false)
+  const orderEngineerIndexRef = useRef<Map<string, string> | null>(null)
+  const orderSelectRequestRef = useRef(0)
 
   useEffect(() => {
     const controller = new AbortController()
@@ -129,11 +137,13 @@ export default function Main() {
   }, [activeEngineerId])
 
   const reloadOrders = useCallback(async () => {
+    orderEngineerIndexRef.current = null
     setOrders(await orderApi.getAll())
   }, [])
 
   const handleOptimizationCompleted = useCallback(
     async (result: OptimizationResult) => {
+      orderEngineerIndexRef.current = null
       setOptimizationResult(result)
       const [ordersData, engineersData] = await Promise.all([
         orderApi.getAll(),
@@ -199,6 +209,67 @@ export default function Main() {
     handleActiveEngineerChange(null)
   }
 
+  const loadOrderEngineerIndex = async () => {
+    if (orderEngineerIndexRef.current) return orderEngineerIndexRef.current
+
+    const routes = await Promise.allSettled(
+      engineers.map(async (engineer) => ({
+        engineerId: engineer.id,
+        route: await orderApi.getEngineerRoute(engineer.id),
+      })),
+    )
+
+    const index = new Map<string, string>()
+    for (const item of routes) {
+      if (item.status !== 'fulfilled') continue
+      for (const stop of item.value.route.stops) {
+        index.set(stop.externalOrderId, item.value.engineerId)
+      }
+    }
+
+    orderEngineerIndexRef.current = index
+    return index
+  }
+
+  const handleOrderSelect = async (externalId: string | null) => {
+    const requestId = ++orderSelectRequestRef.current
+    setSelectedOrderId(externalId)
+    setSelectedOrderEngineerId(null)
+    setIsResolvingOrderEngineer(false)
+
+    if (!externalId) return
+
+    const isInActiveRoute = engineerRoute?.stops.some(
+      (stop) => stop.externalOrderId === externalId,
+    )
+    if (activeEngineerId && isInActiveRoute) {
+      setSelectedOrderEngineerId(activeEngineerId)
+      return
+    }
+
+    const order = orders.find((item) => item.externalId === externalId)
+    if (!order || order.status === 'NotDispatched') return
+
+    setIsResolvingOrderEngineer(true)
+    try {
+      const index = await loadOrderEngineerIndex()
+      if (requestId !== orderSelectRequestRef.current) return
+
+      const engineerId = index.get(externalId) ?? null
+      setSelectedOrderEngineerId(engineerId)
+      if (engineerId) {
+        setActivePanel('brigades')
+        if (engineerId !== activeEngineerId) {
+          handleActiveEngineerChange(engineerId)
+        }
+      }
+    } finally {
+      if (requestId === orderSelectRequestRef.current) {
+        setIsResolvingOrderEngineer(false)
+      }
+    }
+  }
+
   const handleRequestsClick = () => {
     setActivePanel('requests')
     handleActiveEngineerChange(null)
@@ -218,6 +289,15 @@ export default function Main() {
       taskType: stop.taskType,
     })) ?? []
 
+  const selectedOrder = selectedOrderId
+    ? (orders.find((order) => order.externalId === selectedOrderId) ??
+      routeOrders.find((order) => order.externalId === selectedOrderId) ??
+      null)
+    : null
+  const selectedOrderEngineerName =
+    engineers.find((engineer) => engineer.id === selectedOrderEngineerId)
+      ?.name ?? null
+
   return (
     <div className={styles.mainContainer}>
       <div className={styles.mapLayer}>
@@ -233,6 +313,10 @@ export default function Main() {
                 }
               : null
           }
+          selectedOrder={selectedOrder}
+          selectedOrderEngineerName={selectedOrderEngineerName}
+          isSelectedOrderEngineerLoading={isResolvingOrderEngineer}
+          onOrderSelect={handleOrderSelect}
         />
       </div>
 

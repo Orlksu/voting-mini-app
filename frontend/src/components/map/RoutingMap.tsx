@@ -8,6 +8,7 @@ import Map, { Layer, Marker, Source } from 'react-map-gl/maplibre'
 import type { MapLayerMouseEvent, MapRef } from 'react-map-gl/maplibre'
 import { useRef, useState } from 'react'
 import styles from './RoutingMap.module.css'
+import OrderPopup from './OrderPopup.tsx'
 
 setWorkerUrl(
   new URL('maplibre-gl/dist/maplibre-gl-worker.mjs', import.meta.url).href,
@@ -19,6 +20,9 @@ const mapStyle = mapTilerApiKey
   : undefined
 
 const CLUSTER_LAYER_ID = 'work-orders-clusters'
+const POINTS_LAYER_ID = 'work-orders-points'
+const ROUTE_POINTS_LAYER_ID = 'engineer-route-points'
+const ORDER_ZOOM_MIN = 15
 const CLUSTER_FONT = ['Montserrat Bold']
 const CLUSTER_COLOR = '#EABE5F'
 const EMERGENCY_COLOR = '#E5484D'
@@ -58,6 +62,10 @@ interface RoutingMapProps {
     latitude: number
     longitude: number
   } | null
+  selectedOrder?: WorkOrder | null
+  selectedOrderEngineerName?: string | null
+  isSelectedOrderEngineerLoading?: boolean
+  onOrderSelect?: (externalId: string | null) => void
 }
 
 function decodePolyline(encoded: string): [number, number][] {
@@ -105,18 +113,46 @@ export function RoutingMap({
   isEngineerRoute = false,
   encodedPolyline = null,
   startPoint = null,
+  selectedOrder = null,
+  selectedOrderEngineerName = null,
+  isSelectedOrderEngineerLoading = false,
+  onOrderSelect,
 }: RoutingMapProps) {
   const [zoom, setZoom] = useState(11)
-  const [isClusterHovered, setIsClusterHovered] = useState(false)
+  const [isFeatureHovered, setIsFeatureHovered] = useState(false)
   const mapRef = useRef<MapRef>(null)
 
   const handleMapClick = async (event: MapLayerMouseEvent) => {
-    const cluster = event.features?.find(
-      (feature) => feature.layer.id === CLUSTER_LAYER_ID,
-    )
+    const feature = event.features?.[0]
     const map = mapRef.current
-    if (!cluster || !map) return
+    if (!map) return
 
+    if (!feature) {
+      onOrderSelect?.(null)
+      return
+    }
+
+    if (
+      feature.layer.id === POINTS_LAYER_ID ||
+      feature.layer.id === ROUTE_POINTS_LAYER_ID
+    ) {
+      const externalId = feature.properties?.externalId
+      if (typeof externalId !== 'string' || feature.geometry.type !== 'Point') {
+        return
+      }
+
+      map.flyTo({
+        center: feature.geometry.coordinates as [number, number],
+        zoom: Math.max(map.getZoom(), ORDER_ZOOM_MIN),
+        duration: 600,
+      })
+      onOrderSelect?.(externalId)
+      return
+    }
+
+    if (feature.layer.id !== CLUSTER_LAYER_ID) return
+
+    const cluster = feature
     const source = map.getSource<GeoJSONSource>('work-orders')
     const clusterId = cluster.properties?.cluster_id
     if (!source || typeof clusterId !== 'number') return
@@ -196,11 +232,15 @@ export function RoutingMap({
         mapStyle={mapStyle}
         attributionControl={{}}
         onMove={(event) => setZoom(event.viewState.zoom)}
-        interactiveLayerIds={isEngineerRoute ? [] : [CLUSTER_LAYER_ID]}
+        interactiveLayerIds={
+          isEngineerRoute
+            ? [ROUTE_POINTS_LAYER_ID]
+            : [CLUSTER_LAYER_ID, POINTS_LAYER_ID]
+        }
         onClick={handleMapClick}
-        onMouseEnter={() => setIsClusterHovered(true)}
-        onMouseLeave={() => setIsClusterHovered(false)}
-        cursor={isClusterHovered ? 'pointer' : undefined}
+        onMouseEnter={() => setIsFeatureHovered(true)}
+        onMouseLeave={() => setIsFeatureHovered(false)}
+        cursor={isFeatureHovered ? 'pointer' : undefined}
       >
         {isEngineerRoute && routeGeoJson && (
           <Source
@@ -245,7 +285,7 @@ export function RoutingMap({
               data={workOrdersGeoJson}
             >
               <Layer
-                id="engineer-route-points"
+                id={ROUTE_POINTS_LAYER_ID}
                 type="circle"
                 paint={{
                   'circle-radius': 10,
@@ -344,7 +384,7 @@ export function RoutingMap({
               }}
             />
             <Layer
-              id="work-orders-points"
+              id={POINTS_LAYER_ID}
               type="circle"
               filter={['!', ['has', 'point_count']]}
               paint={{
@@ -373,6 +413,14 @@ export function RoutingMap({
               }}
             />
           </Source>
+        )}
+        {selectedOrder && (
+          <OrderPopup
+            order={selectedOrder}
+            engineerName={selectedOrderEngineerName}
+            isEngineerLoading={isSelectedOrderEngineerLoading}
+            onClose={() => onOrderSelect?.(null)}
+          />
         )}
         <Layer
           id="house-numbers"
