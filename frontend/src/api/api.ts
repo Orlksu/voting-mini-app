@@ -34,3 +34,8 @@ api.interceptors.response.use(
     return Promise.reject(new Error(message, { cause: error }))
   },
 )
+
+export function isNotFoundError(error: unknown) {
+  const cause = error instanceof Error ? error.cause : undefined
+  return axios.isAxiosError(cause) && cause.response?.status === 404
+}

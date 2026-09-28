@@ -1,11 +1,14 @@
-import { setWorkerUrl } from 'maplibre-gl'
+import { LngLatBounds, setWorkerUrl } from 'maplibre-gl'
+import type { ExpressionSpecification, GeoJSONSource } from 'maplibre-gl'
 import type { FeatureCollection, Point } from 'geojson'
 import '@fontsource/material-symbols-rounded/400.css'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import type { WorkOrder } from '../../types/workOrder.ts'
 import Map, { Layer, Marker, Source } from 'react-map-gl/maplibre'
-import { useState } from 'react'
+import type { MapLayerMouseEvent, MapRef } from 'react-map-gl/maplibre'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import styles from './RoutingMap.module.css'
+import OrderPopup from './OrderPopup.tsx'
 
 setWorkerUrl(
   new URL('maplibre-gl/dist/maplibre-gl-worker.mjs', import.meta.url).href,
@@ -16,6 +19,85 @@ const mapStyle = mapTilerApiKey
   ? `https://api.maptiler.com/maps/basic-v2-dark/style.json?key=${mapTilerApiKey}`
   : undefined
 
+const CLUSTER_LAYER_ID = 'work-orders-clusters'
+const POINTS_LAYER_ID = 'work-orders-points'
+const ROUTE_POINTS_LAYER_ID = 'engineer-route-points'
+const ORDER_ZOOM_MIN = 15
+const ROUTE_FIT_PADDING = { top: 160, bottom: 80, left: 440, right: 80 }
+const ROUTE_FIT_MAX_ZOOM = 15
+const CLUSTER_FONT = ['Montserrat Bold']
+const CLUSTER_COLOR = '#EABE5F'
+const EMERGENCY_COLOR = '#E5484D'
+const CLUSTER_FILL = '#1B1A1A'
+const CLUSTER_ZOOM_PADDING = { top: 160, bottom: 80, left: 80, right: 80 }
+const CLUSTER_ZOOM_MAX = 16
+
+const clusterRadius: ExpressionSpecification = [
+  'step',
+  ['get', 'point_count'],
+  16,
+  10,
+  20,
+  50,
+  26,
+  100,
+  32,
+]
+
+const clusterAccentColor: ExpressionSpecification = [
+  'interpolate',
+  ['linear'],
+  ['/', ['get', 'emergencyCount'], ['get', 'point_count']],
+  0,
+  CLUSTER_COLOR,
+  0.5,
+  '#E8863A',
+  1,
+  EMERGENCY_COLOR,
+]
+
+function isValidLngLat(longitude: number, latitude: number) {
+  return (
+    Number.isFinite(longitude) &&
+    Number.isFinite(latitude) &&
+    longitude >= -180 &&
+    longitude <= 180 &&
+    latitude >= -90 &&
+    latitude <= 90
+  )
+}
+
+const START_POINT_TOLERANCE_DEG = 0.5
+
+// бэкенд отдаёт маршруты и в polyline5 (1e5), и в polyline6 (1e6, формат Valhalla)
+function decodeRoutePolyline(
+  encoded: string,
+  startPoint: { latitude: number; longitude: number } | null,
+): [number, number][] {
+  const candidates = [1e5, 1e6].map((precision) =>
+    decodePolyline(encoded, precision),
+  )
+
+  const isPlausible = (coordinates: [number, number][]) => {
+    if (coordinates.length === 0) return false
+    if (!coordinates.every(([lng, lat]) => isValidLngLat(lng, lat))) {
+      return false
+    }
+    if (!startPoint) return true
+
+    const [firstLng, firstLat] = coordinates[0]
+    return (
+      Math.abs(firstLat - startPoint.latitude) < START_POINT_TOLERANCE_DEG &&
+      Math.abs(firstLng - startPoint.longitude) < START_POINT_TOLERANCE_DEG
+    )
+  }
+
+  return (
+    candidates.find(isPlausible) ??
+    candidates[0].filter(([lng, lat]) => isValidLngLat(lng, lat))
+  )
+}
+
 interface RoutingMapProps {
   workOrders?: WorkOrder[]
   isEngineerRoute?: boolean
@@ -24,9 +106,16 @@ interface RoutingMapProps {
     latitude: number
     longitude: number
   } | null
+  selectedOrder?: WorkOrder | null
+  selectedOrderEngineerName?: string | null
+  isSelectedOrderEngineerLoading?: boolean
+  onOrderSelect?: (externalId: string | null) => void
 }
 
-function decodePolyline(encoded: string): [number, number][] {
+function decodePolyline(
+  encoded: string,
+  precision: number,
+): [number, number][] {
   let index = 0
   let latitude = 0
   let longitude = 0
@@ -43,8 +132,7 @@ function decodePolyline(encoded: string): [number, number][] {
       shift += 5
     } while (byte >= 0x20)
 
-    const latitudeChange =
-      result & 1 ? ~(result >> 1) : result >> 1
+    const latitudeChange = result & 1 ? ~(result >> 1) : result >> 1
 
     result = 0
     shift = 0
@@ -55,12 +143,11 @@ function decodePolyline(encoded: string): [number, number][] {
       shift += 5
     } while (byte >= 0x20)
 
-    const longitudeChange =
-      result & 1 ? ~(result >> 1) : result >> 1
+    const longitudeChange = result & 1 ? ~(result >> 1) : result >> 1
 
     latitude += latitudeChange
     longitude += longitudeChange
-    coordinates.push([longitude / 1e5, latitude / 1e5])
+    coordinates.push([longitude / precision, latitude / precision])
   }
 
   return coordinates
@@ -71,8 +158,115 @@ export function RoutingMap({
   isEngineerRoute = false,
   encodedPolyline = null,
   startPoint = null,
+  selectedOrder = null,
+  selectedOrderEngineerName = null,
+  isSelectedOrderEngineerLoading = false,
+  onOrderSelect,
 }: RoutingMapProps) {
   const [zoom, setZoom] = useState(11)
+  const [isFeatureHovered, setIsFeatureHovered] = useState(false)
+  const mapRef = useRef<MapRef>(null)
+
+  const routeCoordinates = useMemo(
+    () =>
+      encodedPolyline ? decodeRoutePolyline(encodedPolyline, startPoint) : [],
+    [encodedPolyline, startPoint],
+  )
+
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !isEngineerRoute || !workOrders) return
+
+    const bounds = new LngLatBounds()
+    for (const order of workOrders) {
+      if (isValidLngLat(order.longitude, order.latitude)) {
+        bounds.extend([order.longitude, order.latitude])
+      }
+    }
+    if (
+      startPoint &&
+      isValidLngLat(startPoint.longitude, startPoint.latitude)
+    ) {
+      bounds.extend([startPoint.longitude, startPoint.latitude])
+    }
+    for (const coordinate of routeCoordinates) {
+      bounds.extend(coordinate)
+    }
+    if (bounds.isEmpty()) return
+
+    map.fitBounds(bounds, {
+      padding: ROUTE_FIT_PADDING,
+      maxZoom: ROUTE_FIT_MAX_ZOOM,
+      duration: 800,
+    })
+  }, [isEngineerRoute, workOrders, startPoint, routeCoordinates])
+
+  const selectedOrderId = selectedOrder?.externalId
+  const selectedLatitude = selectedOrder?.latitude
+  const selectedLongitude = selectedOrder?.longitude
+
+  useEffect(() => {
+    const map = mapRef.current
+    if (
+      !map ||
+      !selectedOrderId ||
+      selectedLatitude === undefined ||
+      selectedLongitude === undefined ||
+      !isValidLngLat(selectedLongitude, selectedLatitude)
+    ) {
+      return
+    }
+
+    map.flyTo({
+      center: [selectedLongitude, selectedLatitude],
+      zoom: Math.max(map.getZoom(), ORDER_ZOOM_MIN),
+      duration: 600,
+    })
+  }, [selectedOrderId, selectedLatitude, selectedLongitude])
+
+  const handleMapClick = async (event: MapLayerMouseEvent) => {
+    const feature = event.features?.[0]
+    const map = mapRef.current
+    if (!map) return
+
+    if (!feature) {
+      onOrderSelect?.(null)
+      return
+    }
+
+    if (
+      feature.layer.id === POINTS_LAYER_ID ||
+      feature.layer.id === ROUTE_POINTS_LAYER_ID
+    ) {
+      const externalId = feature.properties?.externalId
+      if (typeof externalId !== 'string') return
+
+      onOrderSelect?.(externalId)
+      return
+    }
+
+    if (feature.layer.id !== CLUSTER_LAYER_ID) return
+
+    const cluster = feature
+    const source = map.getSource<GeoJSONSource>('work-orders')
+    const clusterId = cluster.properties?.cluster_id
+    if (!source || typeof clusterId !== 'number') return
+
+    const leaves = await source.getClusterLeaves(clusterId, Infinity, 0)
+    const bounds = new LngLatBounds()
+    for (const leaf of leaves) {
+      if (leaf.geometry.type === 'Point') {
+        bounds.extend(leaf.geometry.coordinates as [number, number])
+      }
+    }
+    if (bounds.isEmpty()) return
+
+    map.fitBounds(bounds, {
+      padding: CLUSTER_ZOOM_PADDING,
+      maxZoom: CLUSTER_ZOOM_MAX,
+      duration: 600,
+    })
+  }
 
   if (!mapStyle) {
     return (
@@ -86,34 +280,39 @@ export function RoutingMap({
 
   const workOrdersGeoJson: FeatureCollection<Point> = {
     type: 'FeatureCollection',
-    features: workOrders.map((workOrder) => ({
-      type: 'Feature',
-      properties: {
-        externalId: workOrder.externalId,
-        priority: workOrder.priority,
-      },
-      geometry: {
-        type: 'Point',
-        coordinates: [workOrder.longitude, workOrder.latitude],
-      },
-    })),
+    features: workOrders
+      .filter((workOrder) =>
+        isValidLngLat(workOrder.longitude, workOrder.latitude),
+      )
+      .map((workOrder) => ({
+        type: 'Feature',
+        properties: {
+          externalId: workOrder.externalId,
+          priority: workOrder.priority,
+        },
+        geometry: {
+          type: 'Point',
+          coordinates: [workOrder.longitude, workOrder.latitude],
+        },
+      })),
   }
 
-  const routeGeoJson = encodedPolyline
-    ? {
-        type: 'FeatureCollection' as const,
-        features: [
-          {
-            type: 'Feature' as const,
-            properties: {},
-            geometry: {
-              type: 'LineString' as const,
-              coordinates: decodePolyline(encodedPolyline),
+  const routeGeoJson =
+    routeCoordinates.length > 1
+      ? {
+          type: 'FeatureCollection' as const,
+          features: [
+            {
+              type: 'Feature' as const,
+              properties: {},
+              geometry: {
+                type: 'LineString' as const,
+                coordinates: routeCoordinates,
+              },
             },
-          },
-        ],
-      }
-    : null
+          ],
+        }
+      : null
 
   return (
     <div
@@ -124,6 +323,7 @@ export function RoutingMap({
       }}
     >
       <Map
+        ref={mapRef}
         initialViewState={{
           longitude: 37.6176,
           latitude: 55.7558,
@@ -132,13 +332,18 @@ export function RoutingMap({
         mapStyle={mapStyle}
         attributionControl={{}}
         onMove={(event) => setZoom(event.viewState.zoom)}
+        interactiveLayerIds={
+          isEngineerRoute
+            ? [ROUTE_POINTS_LAYER_ID]
+            : [CLUSTER_LAYER_ID, POINTS_LAYER_ID]
+        }
+        onClick={handleMapClick}
+        onMouseEnter={() => setIsFeatureHovered(true)}
+        onMouseLeave={() => setIsFeatureHovered(false)}
+        cursor={isFeatureHovered ? 'pointer' : undefined}
       >
         {isEngineerRoute && routeGeoJson && (
-          <Source
-            id="engineer-route-line"
-            type="geojson"
-            data={routeGeoJson}
-          >
+          <Source id="engineer-route-line" type="geojson" data={routeGeoJson}>
             <Layer
               id="engineer-route-line"
               type="line"
@@ -148,13 +353,7 @@ export function RoutingMap({
               }}
               paint={{
                 'line-color': '#DEB111',
-                'line-width': [
-                  'step',
-                  ['zoom'],
-                  4,
-                  14,
-                  3,
-                ],
+                'line-width': ['step', ['zoom'], 4, 14, 3],
                 'line-dasharray': [
                   'step',
                   ['zoom'],
@@ -176,7 +375,7 @@ export function RoutingMap({
               data={workOrdersGeoJson}
             >
               <Layer
-                id="engineer-route-points"
+                id={ROUTE_POINTS_LAYER_ID}
                 type="circle"
                 paint={{
                   'circle-radius': 10,
@@ -220,42 +419,31 @@ export function RoutingMap({
             clusterProperties={{
               emergencyCount: [
                 '+',
-                [
-                  'case',
-                  ['==', ['get', 'priority'], 'Emergency'],
-                  1,
-                  0,
-                ],
+                ['case', ['==', ['get', 'priority'], 'Emergency'], 1, 0],
               ],
             }}
           >
             <Layer
-              id="work-orders-clusters"
+              id="work-orders-clusters-halo"
               type="circle"
               filter={['has', 'point_count']}
               paint={{
-                'circle-radius': [
-                  'step',
-                  ['get', 'point_count'],
-                  18,
-                  10,
-                  24,
-                  50,
-                  32,
-                ],
-                'circle-color': [
-                  'interpolate',
-                  ['linear'],
-                  ['/', ['get', 'emergencyCount'], ['get', 'point_count']],
-                  0,
-                  '#EABE5F',
-                  0.5,
-                  '#D86A32',
-                  1,
-                  '#B00F19',
-                ],
-                'circle-stroke-color': '#292929',
-                'circle-stroke-width': 2,
+                'circle-radius': ['+', clusterRadius, 7],
+                'circle-color': clusterAccentColor,
+                'circle-opacity': 0.18,
+                'circle-blur': 0.4,
+              }}
+            />
+            <Layer
+              id={CLUSTER_LAYER_ID}
+              type="circle"
+              filter={['has', 'point_count']}
+              paint={{
+                'circle-radius': clusterRadius,
+                'circle-color': CLUSTER_FILL,
+                'circle-opacity': 0.92,
+                'circle-stroke-color': clusterAccentColor,
+                'circle-stroke-width': 2.5,
               }}
             />
             <Layer
@@ -264,14 +452,24 @@ export function RoutingMap({
               filter={['has', 'point_count']}
               layout={{
                 'text-field': ['get', 'point_count_abbreviated'],
-                'text-size': 13,
+                'text-font': CLUSTER_FONT,
+                'text-size': [
+                  'step',
+                  ['get', 'point_count'],
+                  13,
+                  10,
+                  15,
+                  50,
+                  17,
+                ],
+                'text-allow-overlap': true,
               }}
               paint={{
-                'text-color': '#292929',
+                'text-color': clusterAccentColor,
               }}
             />
             <Layer
-              id="work-orders-points"
+              id={POINTS_LAYER_ID}
               type="circle"
               filter={['!', ['has', 'point_count']]}
               paint={{
@@ -292,14 +490,22 @@ export function RoutingMap({
                   'match',
                   ['get', 'priority'],
                   'Emergency',
-                  '#B00F19',
-                  '#EABE5F',
+                  EMERGENCY_COLOR,
+                  CLUSTER_COLOR,
                 ],
-                'circle-stroke-color': '#000000',
+                'circle-stroke-color': CLUSTER_FILL,
                 'circle-stroke-width': 2,
               }}
             />
           </Source>
+        )}
+        {selectedOrder && (
+          <OrderPopup
+            order={selectedOrder}
+            engineerName={selectedOrderEngineerName}
+            isEngineerLoading={isSelectedOrderEngineerLoading}
+            onClose={() => onOrderSelect?.(null)}
+          />
         )}
         <Layer
           id="house-numbers"

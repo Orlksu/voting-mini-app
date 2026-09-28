@@ -1,0 +1,145 @@
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.modal {
+  display: flex;
+  flex-direction: column;
+  gap: 25px;
+
+  width: 75%;
+  min-width: 400px;
+  max-height: 80%;
+  padding: 30px;
+
+  background-color: rgb(27, 26, 26, 0.8);
+  border-radius: 30px;
+  color: #B3B3B3;
+}
+
+.title {
+  text-align: center;
+  font-size: 37px;
+}
+
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 15px;
+}
+
+.metric {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 20px;
+
+  background: rgba(37, 37, 37, 1);
+  border-radius: 20px;
+}
+
+.metricValue {
+  font-size: 30px;
+  color: rgb(234 190 95);
+}
+
+.metricLabel {
+  font-size: 16px;
+}
+
+.lists {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  padding-right: 15px;
+  overflow-y: auto;
+
+  &::-webkit-scrollbar {
+    width: 18px;
+  }
+
+  &::-webkit-scrollbar-track {
+    background: transparent;
+    border: 1px solid rgb(234 190 95 / 85%);
+    border-radius: 30px;
+    margin: 15px 0;
+  }
+
+  &::-webkit-scrollbar-thumb {
+    background: #eabe5f;
+    background-clip: padding-box;
+    border: 5px solid transparent;
+    border-radius: 30px;
+  }
+}
+
+.sectionTitle {
+  margin-top: 10px;
+  font-size: 24px;
+  color: white;
+}
+
+.route {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 15px;
+  padding: 15px;
+
+  background: rgba(37, 37, 37, 1);
+  border-radius: 15px;
+  transition: background 0.2s ease-in-out;
+}
+
+.routeClickable {
+  cursor: pointer;
+}
+
+.routeClickable:hover {
+  background: rgba(234, 190, 95, 0.3);
+}
+
+.routeName {
+  font-size: 20px;
+  color: white;
+}
+
+.routeStats {
+  font-size: 16px;
+}
+
+.routeIcon {
+  color: rgb(234 190 95);
+}
+
+.unassigned {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 15px;
+
+  border-bottom: 3px solid rgb(234, 190, 95, 0.2);
+
+  &:last-child {
+    border-bottom: none;
+  }
+}
+
+.reason {
+  font-size: 16px;
+  color: #FF6B6B;
+}
+
+.empty {
+  text-align: center;
+  font-size: 20px;
+}

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
-import axios from 'axios'
-import styles from './ImportProgress.module.css'
+import styles from './JobProgress.module.css'
+import JobProgressCard from './JobProgressCard.tsx'
+import { isNotFoundError } from '../../api/api.ts'
 import { orderApi } from '../../logic/orderApi.ts'
 import type { OrderImportJob } from '../../types/orderImport.ts'
 
@@ -12,23 +13,22 @@ function isCompleted(job: OrderImportJob) {
   return job.status === 'Completed' || job.result !== null
 }
 
-function isNotFound(error: unknown) {
-  const cause = error instanceof Error ? error.cause : undefined
-  return axios.isAxiosError(cause) && cause.response?.status === 404
-}
-
 type ImportProgressProps = {
   jobId: string
+  fileName?: string
   onCompleted: () => Promise<void>
   onClose: () => void
   onShowOrders: () => void
+  onOptimize: () => void
 }
 
 export default function ImportProgress({
   jobId,
+  fileName,
   onCompleted,
   onClose,
   onShowOrders,
+  onOptimize,
 }: ImportProgressProps) {
   const [job, setJob] = useState<OrderImportJob | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -49,7 +49,7 @@ export default function ImportProgress({
         if (controller.signal.aborted) return
 
         failures += 1
-        if (isNotFound(pollError)) {
+        if (isNotFoundError(pollError)) {
           setError('Задача импорта не найдена')
         } else if (failures >= MAX_POLL_FAILURES) {
           setError('Не удалось получить статус импорта')
@@ -89,15 +89,10 @@ export default function ImportProgress({
   const percent = isDone ? 100 : (job?.progressPercent ?? 0)
 
   return (
-    <div className={styles.container}>
-      <div className={styles.header}>
-        <p className={styles.title}>импорт заявок</p>
-        {isFinished && (
-          <button type="button" className={styles.close} onClick={onClose}>
-            <span className="material-symbols-rounded">close</span>
-          </button>
-        )}
-      </div>
+    <JobProgressCard
+      title={fileName ? `импорт: ${fileName}` : 'импорт заявок'}
+      onClose={isFinished ? onClose : undefined}
+    >
 
       {error ? (
         <p className={styles.error}>{error}</p>
@@ -125,17 +120,26 @@ export default function ImportProgress({
             {job.result.unresolvedAddressesCount > 0 &&
               `, адрес не найден: ${job.result.unresolvedAddressesCount}`}
           </p>
-          <button
-            type="button"
-            className={styles.showOrders}
-            onClick={onShowOrders}
-          >
-            посмотреть заявки
-          </button>
+          <div className={styles.actions}>
+            <button
+              type="button"
+              className={styles.secondaryAction}
+              onClick={onShowOrders}
+            >
+              посмотреть заявки
+            </button>
+            <button
+              type="button"
+              className={styles.primaryAction}
+              onClick={onOptimize}
+            >
+              распределить
+            </button>
+          </div>
         </>
       )}
 
       {refreshError && <p className={styles.error}>{refreshError}</p>}
-    </div>
+    </JobProgressCard>
   )
 }

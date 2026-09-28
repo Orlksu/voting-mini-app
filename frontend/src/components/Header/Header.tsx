@@ -8,6 +8,9 @@ type HeaderProps = {
   isRequestsOpen: boolean
   onRequestsClick: () => void
   onUploadFileClick: () => void
+  onOptimizeClick: () => void
+  onReplanClick: () => void
+  isOptimizing: boolean
 }
 
 export default function Header({
@@ -17,9 +20,27 @@ export default function Header({
   isRequestsOpen,
   onRequestsClick,
   onUploadFileClick,
+  onOptimizeClick,
+  onReplanClick,
+  isOptimizing,
 }: HeaderProps) {
   const [isUploadOpen, setIsUploadOpen] = useState(false)
   const uploadRef = useRef<HTMLDivElement>(null)
+  const [isOptimizeMenuOpen, setIsOptimizeMenuOpen] = useState(false)
+  const optimizeRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!isOptimizeMenuOpen) return
+
+    const handleClickOutside = (event: MouseEvent) => {
+      if (!optimizeRef.current?.contains(event.target as Node)) {
+        setIsOptimizeMenuOpen(false)
+      }
+    }
+
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [isOptimizeMenuOpen])
 
   useEffect(() => {
     if (!isUploadOpen) return
@@ -85,6 +106,52 @@ export default function Header({
                 ввести вручную
               </p>
             </div>
+          </div>
+        </div>
+        <div className={styles.optimizeGroup} ref={optimizeRef}>
+          <button
+            type="button"
+            className={styles.optimize}
+            disabled={isOptimizing}
+            onClick={onOptimizeClick}
+          >
+            <span className="material-symbols-rounded">route</span>
+            {isOptimizing ? 'распределение...' : 'распределить'}
+          </button>
+          <button
+            type="button"
+            className={styles.optimizeToggle}
+            disabled={isOptimizing}
+            aria-label="Другие варианты распределения"
+            onClick={() => setIsOptimizeMenuOpen((isOpen) => !isOpen)}
+          >
+            <span
+              className={`material-symbols-rounded ${styles.chevron} ${isOptimizeMenuOpen ? styles.chevronUp : ''}`}
+            >
+              keyboard_arrow_down
+            </span>
+          </button>
+          <div
+            className={`${styles.optimizeMenu} ${isOptimizeMenuOpen && !isOptimizing ? styles.optimizeMenuOpen : ''}`}
+          >
+            <button
+              type="button"
+              className={styles.optimizeMenuItem}
+              onClick={() => {
+                setIsOptimizeMenuOpen(false)
+                onReplanClick()
+              }}
+            >
+              <span className="material-symbols-rounded">sync</span>
+              <span>
+                <span className={styles.optimizeMenuTitle}>
+                  перераспределить все
+                </span>
+                <span className={styles.optimizeMenuHint}>
+                  пересобрать маршруты, включая уже назначенные заявки
+                </span>
+              </span>
+            </button>
           </div>
         </div>
       </div>

@@ -6,7 +6,14 @@ import { orderApi } from '../../logic/orderApi.ts'
 type UploadCsvModalProps = {
   isOpen: boolean
   onClose: () => void
-  onUploaded: (jobId: string) => void
+  onUploaded: (
+    uploads: { jobId: string; fileName: string }[],
+    isAllUploaded: boolean,
+  ) => void
+}
+
+function isCsv(file: File) {
+  return file.name.toLowerCase().endsWith('.csv')
 }
 
 export default function UploadCsvModal({
@@ -14,7 +21,7 @@ export default function UploadCsvModal({
   onClose,
   onUploaded,
 }: UploadCsvModalProps) {
-  const [file, setFile] = useState<File | null>(null)
+  const [files, setFiles] = useState<File[]>([])
   const [isDragOver, setIsDragOver] = useState(false)
   const [isUploading, setIsUploading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -22,7 +29,7 @@ export default function UploadCsvModal({
   const handleClose = () => {
     if (isUploading) return
 
-    setFile(null)
+    setFiles([])
     setError(null)
     setIsDragOver(false)
     onClose()
@@ -41,16 +48,28 @@ export default function UploadCsvModal({
 
   if (!isOpen) return null
 
-  const selectFile = (selected: File | undefined) => {
-    if (!selected) return
+  const addFiles = (selected: FileList | null | undefined) => {
+    if (!selected || selected.length === 0) return
 
-    if (!selected.name.toLowerCase().endsWith('.csv')) {
-      setError('Нужен файл в формате CSV')
-      return
-    }
+    const list = Array.from(selected)
+    const csvFiles = list.filter(isCsv)
 
-    setError(null)
-    setFile(selected)
+    setError(
+      csvFiles.length < list.length ? 'Пропущены файлы не в формате CSV' : null,
+    )
+    setFiles((current) => [
+      ...current,
+      ...csvFiles.filter(
+        (file) =>
+          !current.some(
+            (item) => item.name === file.name && item.size === file.size,
+          ),
+      ),
+    ])
+  }
+
+  const removeFile = (index: number) => {
+    setFiles((current) => current.filter((_, i) => i !== index))
   }
 
   const handleDragOver = (event: DragEvent<HTMLLabelElement>) => {
@@ -61,31 +80,47 @@ export default function UploadCsvModal({
   const handleDrop = (event: DragEvent<HTMLLabelElement>) => {
     event.preventDefault()
     setIsDragOver(false)
-    selectFile(event.dataTransfer.files[0])
+    addFiles(event.dataTransfer.files)
   }
 
   const handleInputChange = (event: ChangeEvent<HTMLInputElement>) => {
-    selectFile(event.target.files?.[0])
+    addFiles(event.target.files)
     event.target.value = ''
   }
 
   const handleSubmit = async () => {
-    if (!file) return
+    if (files.length === 0) return
 
-    try {
-      setIsUploading(true)
-      setError(null)
-      const job = await orderApi.uploadCsv(file)
-      setFile(null)
-      onUploaded(job.jobId)
-    } catch (uploadError) {
-      setError(
-        uploadError instanceof Error
-          ? uploadError.message
-          : 'Не удалось загрузить файл',
-      )
-    } finally {
-      setIsUploading(false)
+    setIsUploading(true)
+    setError(null)
+
+    const results = await Promise.allSettled(
+      files.map((file) => orderApi.uploadCsv(file)),
+    )
+
+    const uploads: { jobId: string; fileName: string }[] = []
+    const failedFiles: File[] = []
+    const errors: string[] = []
+
+    results.forEach((result, index) => {
+      const file = files[index]
+      if (result.status === 'fulfilled') {
+        uploads.push({ jobId: result.value.jobId, fileName: file.name })
+      } else {
+        failedFiles.push(file)
+        const reason =
+          result.reason instanceof Error
+            ? result.reason.message
+            : 'не удалось загрузить'
+        errors.push(`${file.name}: ${reason}`)
+      }
+    })
+
+    setIsUploading(false)
+    setFiles(failedFiles)
+    setError(errors.length > 0 ? errors.join('\n') : null)
+    if (uploads.length > 0) {
+      onUploaded(uploads, failedFiles.length === 0)
     }
   }
 
@@ -109,17 +144,33 @@ export default function UploadCsvModal({
             className={styles.input}
             type="file"
             accept=".csv,text/csv"
+            multiple
             onChange={handleInputChange}
           />
           <span className={`material-symbols-rounded ${styles.icon}`}>
             upload_file
           </span>
-          {file ? (
-            <p className={styles.fileName}>{file.name}</p>
-          ) : (
-            <p>перетащите CSV-файл сюда или нажмите, чтобы выбрать</p>
-          )}
+          <p>перетащите CSV-файлы сюда или нажмите, чтобы выбрать</p>
         </label>
+
+        {files.length > 0 && (
+          <ul className={styles.files}>
+            {files.map((file, index) => (
+              <li key={`${file.name}-${file.size}`} className={styles.fileItem}>
+                <span className={styles.fileName}>{file.name}</span>
+                <button
+                  type="button"
+                  className={styles.removeFile}
+                  disabled={isUploading}
+                  onClick={() => removeFile(index)}
+                  aria-label={`Убрать ${file.name}`}
+                >
+                  <span className="material-symbols-rounded">close</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
 
         {error && (
           <p className={styles.error} role="alert">
@@ -130,10 +181,14 @@ export default function UploadCsvModal({
         <button
           type="button"
           className={styles.submit}
-          disabled={!file || isUploading}
+          disabled={files.length === 0 || isUploading}
           onClick={handleSubmit}
         >
-          {isUploading ? 'отправка...' : 'отправить'}
+          {isUploading
+            ? 'отправка...'
+            : files.length > 1
+              ? `отправить (${files.length})`
+              : 'отправить'}
         </button>
       </div>
     </div>

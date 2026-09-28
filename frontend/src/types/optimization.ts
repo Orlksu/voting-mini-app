@@ -1,49 +1,18 @@
-export const TransportType = {
-  Car: 1,
-  PublicTransit: 2,
-  Bicycle: 3,
-  Pedestrian: 4,
-} as const
+export type TransportType = 'Car' | 'PublicTransit' | 'Bicycle' | 'Pedestrian'
 
-export type TransportType = (typeof TransportType)[keyof typeof TransportType]
+export type OrderPriority = 'Low' | 'Normal' | 'High' | 'Emergency'
 
-export const OrderPriority = {
-  Low: 1,
-  Normal: 2,
-  High: 3,
-  Emergency: 4,
-} as const
-
-export type OrderPriority = (typeof OrderPriority)[keyof typeof OrderPriority]
-
-export const JobStatus = {
-  Queued: 1,
-  Processing: 2,
-  Completed: 3,
-  Failed: 4,
-} as const
-
-export type JobStatus = (typeof JobStatus)[keyof typeof JobStatus]
-
-export const UnassignedReasonCode = {
-  NoQualifiedEngineer: 1,
-  NoTransportMatch: 2,
-  TimeWindowMissed: 3,
-  ShiftLimitExceeded: 4,
-  CapacityOverload: 5,
-  EmergencyDisplaced: 6,
-} as const
+export type JobStatus = 'Queued' | 'Processing' | 'Completed' | 'Failed'
 
 export type UnassignedReasonCode =
-  (typeof UnassignedReasonCode)[keyof typeof UnassignedReasonCode]
+  | 'NoQualifiedEngineer'
+  | 'NoTransportMatch'
+  | 'TimeWindowMissed'
+  | 'ShiftLimitExceeded'
+  | 'CapacityOverload'
+  | 'EmergencyDisplaced'
 
-export const SkillType = {
-  LocalRepair: 1,
-  Installation: 2,
-  Emergency: 3,
-} as const
-
-export type SkillType = (typeof SkillType)[keyof typeof SkillType]
+export type SkillType = 'LocalRepair' | 'Installation' | 'Emergency'
 
 export type EngineerInput = {
   externalId: string
@@ -105,6 +74,9 @@ export type EngineerRoute = {
   totalTravelMinutes: number
   stops: RouteStop[]
   encodedPolyline: string | null
+  startAddress: string | null
+  startLatitude: number | null
+  startLongitude: number | null
 }
 
 export type PlanComparisonMetrics = {

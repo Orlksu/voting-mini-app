@@ -63,12 +63,71 @@
   color: rgb(234 190 95);
 }
 
+.files {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 180px;
+  margin: 0;
+  padding: 0 10px 0 0;
+  overflow-y: auto;
+  list-style: none;
+
+  &::-webkit-scrollbar {
+    width: 12px;
+  }
+
+  &::-webkit-scrollbar-track {
+    background: transparent;
+    border: 1px solid rgb(234 190 95 / 85%);
+    border-radius: 30px;
+  }
+
+  &::-webkit-scrollbar-thumb {
+    background: #eabe5f;
+    background-clip: padding-box;
+    border: 3px solid transparent;
+    border-radius: 30px;
+  }
+}
+
+@supports not selector(::-webkit-scrollbar) {
+  .files {
+    scrollbar-color: #eabe5f transparent;
+  }
+}
+
+.fileItem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 15px;
+
+  background: rgba(37, 37, 37, 1);
+  border-radius: 15px;
+}
+
 .fileName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: white;
-  word-break: break-all;
+}
+
+.removeFile {
+  cursor: pointer;
+  display: flex;
+
+  padding: 0;
+  color: #B3B3B3;
+  background: transparent;
+  border: none;
 }
 
 .error {
+  white-space: pre-line;
   color: #FF6B6B;
   font-size: 18px;
   text-align: center;

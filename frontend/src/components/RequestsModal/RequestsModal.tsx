@@ -6,9 +6,14 @@ import { orderApi } from '../../logic/orderApi.ts'
 type RequestsModalProps = {
   isOpen: boolean
   onClose: () => void
+  onRequestClick: (externalId: string) => void
 }
 
-export default function RequestsModal({ isOpen, onClose }: RequestsModalProps) {
+export default function RequestsModal({
+  isOpen,
+  onClose,
+  onRequestClick,
+}: RequestsModalProps) {
   const [requests, setRequests] = useState<WorkOrder[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -69,7 +74,11 @@ export default function RequestsModal({ isOpen, onClose }: RequestsModalProps) {
         <div className={styles.orders}>
           {requests.length > 0 ? (
             requests.map((request) => (
-              <div key={request.id} className={styles.request}>
+              <div
+                key={request.id}
+                className={styles.request}
+                onClick={() => onRequestClick(request.externalId)}
+              >
                 <div className={styles.circle}></div>
                 <div className={styles.info}>
                   <p>{request.address}</p>
