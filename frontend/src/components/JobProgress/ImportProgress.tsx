@@ -15,6 +15,7 @@ function isCompleted(job: OrderImportJob) {
 
 type ImportProgressProps = {
   jobId: string
+  fileName?: string
   onCompleted: () => Promise<void>
   onClose: () => void
   onShowOrders: () => void
@@ -23,6 +24,7 @@ type ImportProgressProps = {
 
 export default function ImportProgress({
   jobId,
+  fileName,
   onCompleted,
   onClose,
   onShowOrders,
@@ -88,7 +90,7 @@ export default function ImportProgress({
 
   return (
     <JobProgressCard
-      title="импорт заявок"
+      title={fileName ? `импорт: ${fileName}` : 'импорт заявок'}
       onClose={isFinished ? onClose : undefined}
     >
 

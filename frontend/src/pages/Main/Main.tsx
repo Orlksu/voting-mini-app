@@ -8,6 +8,7 @@ import UploadCsvModal from '../../components/UploadCsvModal/UploadCsvModal.tsx'
 import ImportProgress from '../../components/JobProgress/ImportProgress.tsx'
 import OptimizationProgress from '../../components/JobProgress/OptimizationProgress.tsx'
 import JobProgressCard from '../../components/JobProgress/JobProgressCard.tsx'
+import JobProgressStack from '../../components/JobProgress/JobProgressStack.tsx'
 import OptimizationResultModal from '../../components/OptimizationResultModal/OptimizationResultModal.tsx'
 import { engineersApi } from '../../logic/engineerApi'
 import type { Engineer } from '../../types/engineer'
@@ -21,29 +22,42 @@ import type { OptimizationResult } from '../../types/optimization.ts'
 type ProgressJob = {
   type: 'import' | 'optimization'
   jobId: string
+  fileName?: string
 }
 
-const PROGRESS_JOB_STORAGE_KEY = 'progressJob'
+const PROGRESS_JOBS_STORAGE_KEY = 'progressJobs'
 
-function readStoredProgressJob(): ProgressJob | null {
+function parseProgressJob(value: unknown): ProgressJob | null {
+  if (
+    typeof value === 'object' &&
+    value !== null &&
+    'type' in value &&
+    (value.type === 'import' || value.type === 'optimization') &&
+    'jobId' in value &&
+    typeof value.jobId === 'string'
+  ) {
+    const fileName =
+      'fileName' in value && typeof value.fileName === 'string'
+        ? value.fileName
+        : undefined
+    return { type: value.type, jobId: value.jobId, fileName }
+  }
+  return null
+}
+
+function readStoredProgressJobs(): ProgressJob[] {
   try {
-    const raw = localStorage.getItem(PROGRESS_JOB_STORAGE_KEY)
-    if (!raw) return null
+    const raw = localStorage.getItem(PROGRESS_JOBS_STORAGE_KEY)
+    if (!raw) return []
 
     const parsed: unknown = JSON.parse(raw)
-    if (
-      typeof parsed === 'object' &&
-      parsed !== null &&
-      'type' in parsed &&
-      (parsed.type === 'import' || parsed.type === 'optimization') &&
-      'jobId' in parsed &&
-      typeof parsed.jobId === 'string'
-    ) {
-      return { type: parsed.type, jobId: parsed.jobId }
-    }
-    return null
+    if (!Array.isArray(parsed)) return []
+
+    return parsed
+      .map(parseProgressJob)
+      .filter((job): job is ProgressJob => job !== null)
   } catch {
-    return null
+    return []
   }
 }
 
@@ -65,8 +79,8 @@ export default function Main() {
   const isBrigadesOpen = activePanel === 'brigades'
   const isRequestsOpen = activePanel === 'requests'
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false)
-  const [progressJob, setProgressJob] = useState<ProgressJob | null>(
-    readStoredProgressJob,
+  const [progressJobs, setProgressJobs] = useState<ProgressJob[]>(
+    readStoredProgressJobs,
   )
   const [isStartingOptimization, setIsStartingOptimization] = useState(false)
   const [optimizationError, setOptimizationError] = useState<string | null>(
@@ -162,23 +176,32 @@ export default function Main() {
 
   useEffect(() => {
     try {
-      if (progressJob) {
+      if (progressJobs.length > 0) {
         localStorage.setItem(
-          PROGRESS_JOB_STORAGE_KEY,
-          JSON.stringify(progressJob),
+          PROGRESS_JOBS_STORAGE_KEY,
+          JSON.stringify(progressJobs),
         )
       } else {
-        localStorage.removeItem(PROGRESS_JOB_STORAGE_KEY)
+        localStorage.removeItem(PROGRESS_JOBS_STORAGE_KEY)
       }
     } catch {
       // localStorage недоступен (приватный режим) — прогресс просто не переживёт перезагрузку
     }
-  }, [progressJob])
+  }, [progressJobs])
 
-  const handleUploaded = (jobId: string) => {
-    setIsUploadModalOpen(false)
-    setOptimizationError(null)
-    setProgressJob({ type: 'import', jobId })
+  const removeProgressJob = (jobId: string) => {
+    setProgressJobs((jobs) => jobs.filter((job) => job.jobId !== jobId))
+  }
+
+  const handleUploaded = (
+    uploads: { jobId: string; fileName: string }[],
+    isAllUploaded: boolean,
+  ) => {
+    if (isAllUploaded) setIsUploadModalOpen(false)
+    setProgressJobs((jobs) => [
+      ...jobs,
+      ...uploads.map((upload) => ({ type: 'import' as const, ...upload })),
+    ])
   }
 
   const startOptimization = async () => {
@@ -187,9 +210,11 @@ export default function Main() {
       setOptimizationError(null)
       setOptimizationResult(null)
       const job = await optimizationApi.createJob()
-      setProgressJob({ type: 'optimization', jobId: job.jobId })
+      setProgressJobs((jobs) => [
+        ...jobs.filter((item) => item.type !== 'optimization'),
+        { type: 'optimization', jobId: job.jobId },
+      ])
     } catch (startError) {
-      setProgressJob(null)
       setOptimizationError(
         startError instanceof Error
           ? startError.message
@@ -202,7 +227,8 @@ export default function Main() {
 
   const isOptimizing =
     isStartingOptimization ||
-    (progressJob?.type === 'optimization' && optimizationResult === null)
+    (progressJobs.some((job) => job.type === 'optimization') &&
+      optimizationResult === null)
 
   const handleActiveEngineerChange = (engineerId: string | null) => {
     setActiveEngineerId(engineerId)
@@ -394,41 +420,47 @@ export default function Main() {
         }}
       />
 
-      {progressJob?.type === 'import' && (
-        <ImportProgress
-          key={progressJob.jobId}
-          jobId={progressJob.jobId}
-          onCompleted={reloadOrders}
-          onClose={() => setProgressJob(null)}
-          onShowOrders={() => {
-            setProgressJob(null)
-            handleRequestsClick()
-          }}
-          onOptimize={startOptimization}
-        />
-      )}
+      <JobProgressStack>
+        {progressJobs.map((job) =>
+          job.type === 'import' ? (
+            <ImportProgress
+              key={job.jobId}
+              jobId={job.jobId}
+              fileName={job.fileName}
+              onCompleted={reloadOrders}
+              onClose={() => removeProgressJob(job.jobId)}
+              onShowOrders={() => {
+                removeProgressJob(job.jobId)
+                handleRequestsClick()
+              }}
+              onOptimize={() => {
+                removeProgressJob(job.jobId)
+                void startOptimization()
+              }}
+            />
+          ) : (
+            <OptimizationProgress
+              key={job.jobId}
+              jobId={job.jobId}
+              onCompleted={handleOptimizationCompleted}
+              onShowResult={() => {
+                setActivePanel('result')
+                handleActiveEngineerChange(null)
+              }}
+              onClose={() => removeProgressJob(job.jobId)}
+            />
+          ),
+        )}
 
-      {progressJob?.type === 'optimization' && (
-        <OptimizationProgress
-          key={progressJob.jobId}
-          jobId={progressJob.jobId}
-          onCompleted={handleOptimizationCompleted}
-          onShowResult={() => {
-            setActivePanel('result')
-            handleActiveEngineerChange(null)
-          }}
-          onClose={() => setProgressJob(null)}
-        />
-      )}
-
-      {optimizationError && !progressJob && (
-        <JobProgressCard
-          title="распределение заявок"
-          onClose={() => setOptimizationError(null)}
-        >
-          <p role="alert">{optimizationError}</p>
-        </JobProgressCard>
-      )}
+        {optimizationError && (
+          <JobProgressCard
+            title="распределение заявок"
+            onClose={() => setOptimizationError(null)}
+          >
+            <p role="alert">{optimizationError}</p>
+          </JobProgressCard>
+        )}
+      </JobProgressStack>
     </div>
   )
 }
