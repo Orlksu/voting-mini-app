@@ -277,9 +277,12 @@ public class OrToolsVrpSolver
                 bool hasEquipment = ord.RequiredEquipment is not { Count: > 0 } ||
                                     (eng.Equipment != null && ord.RequiredEquipment.All(r => eng.Equipment.Contains(r)));
 
-                // Для пешехода: запрещаем заявки, расположенные дальше 3.5 км от его депо/старта
+                // Для пешехода: если указан целевой район, разрешаем заявки только внутри этого района;
+                // если район не указан — ограничиваем радиусом от депо.
                 bool isPedestrianTooFar = eng.Transport == TransportType.Pedestrian &&
-                                          distanceMatrix[i][i, numVehicles + j] > MaxPedestrianFromDepotKm;
+                    (!string.IsNullOrWhiteSpace(eng.District)
+                        ? !string.Equals(eng.District, ord.District, StringComparison.OrdinalIgnoreCase)
+                        : distanceMatrix[i][i, numVehicles + j] > MaxPedestrianFromDepotKm);
 
                 if (!hasSkill || !hasTransport || !hasEquipment || isPedestrianTooFar)
                 {
@@ -308,16 +311,18 @@ public class OrToolsVrpSolver
 
         
         RoutingSearchParameters searchParameters = operations_research_constraint_solver.DefaultRoutingSearchParameters();
-        searchParameters.FirstSolutionStrategy = FirstSolutionStrategy.Types.Value.ParallelCheapestInsertion;
+        searchParameters.FirstSolutionStrategy = FirstSolutionStrategy.Types.Value.Savings;
         searchParameters.LocalSearchMetaheuristic = LocalSearchMetaheuristic.Types.Value.GuidedLocalSearch;
         searchParameters.GuidedLocalSearchLambdaCoefficient = 0.5;
         searchParameters.LocalSearchOperators.UseRelocateSubtrip = Google.OrTools.Util.OptionalBoolean.BoolTrue;
         searchParameters.LocalSearchOperators.UseCrossExchange = Google.OrTools.Util.OptionalBoolean.BoolTrue;
         searchParameters.LocalSearchOperators.UseExchangeSubtrip = Google.OrTools.Util.OptionalBoolean.BoolTrue;
         searchParameters.LocalSearchOperators.UseRelocateNeighbors = Google.OrTools.Util.OptionalBoolean.BoolTrue;
+        searchParameters.LocalSearchOperators.UseLinKernighan = Google.OrTools.Util.OptionalBoolean.BoolTrue;
+        searchParameters.LocalSearchOperators.UseNodePairSwapActive = Google.OrTools.Util.OptionalBoolean.BoolTrue;
         searchParameters.TimeLimit = new Google.Protobuf.WellKnownTypes.Duration
         {
-            Seconds = Math.Max(1, timeLimitSeconds > 0 ? timeLimitSeconds : DefaultTimeLimitSeconds)
+            Seconds = Math.Max(1, timeLimitSeconds > 0 ? timeLimitSeconds : 35)
         };
 
         Assignment? solution = routing.SolveWithParameters(searchParameters);
