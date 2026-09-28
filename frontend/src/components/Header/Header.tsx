@@ -4,12 +4,16 @@ type HeaderProps = {
   isBrigadesOpen: boolean
   onBrigadesClick: () => void
   onCloseBrigades: () => void
+  isRequestsOpen: boolean
+  onRequestsClick: () => void
 }
 
 export default function Header({
   isBrigadesOpen,
   onBrigadesClick,
   onCloseBrigades,
+  isRequestsOpen,
+  onRequestsClick,
 }: HeaderProps) {
   return (
     <div className={styles.headerContainer}>
@@ -21,7 +25,12 @@ export default function Header({
         >
           бригады
         </p>
-        <p>заявки</p>
+        <p
+          className={isRequestsOpen ? styles.active : ''}
+          onClick={onRequestsClick}
+        >
+          текущие заявки
+        </p>
       </nav>
     </div>
   )

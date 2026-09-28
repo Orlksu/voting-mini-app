@@ -3,6 +3,7 @@ import { RoutingMap } from '../../components/map/RoutingMap'
 import { useEffect, useState } from 'react'
 import Header from '../../components/Header/Header.tsx'
 import EngineerList from '../../components/EngineerList/EngineerList.tsx'
+import RequestsModal from '../../components/RequestsModal/RequestsModal.tsx'
 import { engineersApi } from '../../logic/engineerApi'
 import type { Engineer } from '../../types/engineer'
 import type { WorkOrder } from '../../types/workOrder.ts'
@@ -18,7 +19,9 @@ export default function Main() {
   )
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [isBrigadesOpen, setIsBrigadesOpen] = useState(false)
+  const [activePanel, setActivePanel] = useState<'brigades' | 'requests' | null>(null)
+  const isBrigadesOpen = activePanel === 'brigades'
+  const isRequestsOpen = activePanel === 'requests'
 
   useEffect(() => {
     const controller = new AbortController()
@@ -83,7 +86,12 @@ export default function Main() {
   }
 
   const handleCloseBrigades = () => {
-    setIsBrigadesOpen(false)
+    setActivePanel(null)
+    handleActiveEngineerChange(null)
+  }
+
+  const handleRequestsClick = () => {
+    setActivePanel('requests')
     handleActiveEngineerChange(null)
   }
 
@@ -122,8 +130,10 @@ export default function Main() {
       <div className={styles.overlayLayer}>
         <Header
           isBrigadesOpen={isBrigadesOpen}
-          onBrigadesClick={() => setIsBrigadesOpen(true)}
+          onBrigadesClick={() => setActivePanel('brigades')}
           onCloseBrigades={handleCloseBrigades}
+          isRequestsOpen={isRequestsOpen}
+          onRequestsClick={handleRequestsClick}
         />
         <div className={styles.contentLayer}>
           {isBrigadesOpen && (
@@ -137,6 +147,11 @@ export default function Main() {
           )}
         </div>
       </div>
+
+      <RequestsModal
+        isOpen={isRequestsOpen}
+        onClose={() => setActivePanel(null)}
+      />
     </div>
   )
 }
