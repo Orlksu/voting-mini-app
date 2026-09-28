@@ -32,22 +32,14 @@ public static class LunchPolicy
         }
         else
         {
-            // Каскад: окно_i = [11:00 + i·step, +D]; для одной бригады — центр ядра.
+            // Окно обеда внутри ядра 11:00–15:00 (4 часа для размещения 60-минутного обеда).
+            // Солвер гибко вписывает перерыв в естественное окно ожидания между заявками.
             var anchor = new DateTimeOffset(
                 engineer.ShiftStart.Year, engineer.ShiftStart.Month, engineer.ShiftStart.Day,
                 CoreStart.Hours, CoreStart.Minutes, CoreStart.Seconds, engineer.ShiftStart.Offset);
 
-            if (totalEngineers <= 1)
-            {
-                windowStart = anchor.AddMinutes((CoreWidthMinutes - duration) / 2.0);
-                windowEnd = windowStart.AddMinutes(duration);
-            }
-            else
-            {
-                double step = (CoreWidthMinutes - duration) / (double)(totalEngineers - 1);
-                windowStart = anchor.AddMinutes(engineerIndex * step);
-                windowEnd = windowStart.AddMinutes(duration);
-            }
+            windowStart = anchor;
+            windowEnd = anchor.AddMinutes(CoreWidthMinutes);
         }
 
         // Пересечение со сменой.

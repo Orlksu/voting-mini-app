@@ -127,7 +127,7 @@ public class OrToolsVrpSolver
             });
             vehicleTransitCallbacks[v] = timeCb;
 
-            // 2. Hybrid cost callback (взвешенная сумма реального расстояния и времени с прогрессивным штрафом за маятники)
+            // 2. Hybrid cost callback (взвешенная сумма расстояния и времени с привязкой к районам и защитой от маятников)
             int costCb = routing.RegisterTransitCallback((long fromIndex, long toIndex) =>
             {
                 int fromNode = manager.IndexToNode(fromIndex);
@@ -139,14 +139,43 @@ public class OrToolsVrpSolver
                 double distKm = vDist[fromNode, toNode];
                 long travelTime = vTime[fromNode, toNode];
 
-                // 100 у.е. за каждый километр + 10 у.е. за каждую минуту в пути
+                // Базовая стоимость: 100 у.е./км + 10 у.е./мин
                 long cost = (long)Math.Round(distKm * 100.0) + (travelTime * 10);
 
-                // Прогрессивный квадратичный штраф за перегоны длиннее 7.5 км (ломает маятники между удаленными кластерами)
-                if (distKm > 7.5)
+                // Аффинити к домашнему району инженера (Home District Affinity):
+                // Инженеру выгоднее брать заявки в своем целевом районе (исключает маятниковую инверсию севера и юга)
+                if (toNode >= numVehicles && toNode < numVehicles + numOrders)
                 {
-                    double excessKm = distKm - 7.5;
-                    cost += (long)Math.Round(excessKm * excessKm * 300.0);
+                    var toOrd = orders[toNode - numVehicles];
+                    if (!string.IsNullOrWhiteSpace(eng.District) && !string.IsNullOrWhiteSpace(toOrd.District))
+                    {
+                        if (!string.Equals(eng.District, toOrd.District, StringComparison.OrdinalIgnoreCase))
+                        {
+                            cost += 1500;
+                        }
+                    }
+                }
+
+                // Ограничения на переезды между заявками (Inter-Order Hops):
+                if (fromNode >= numVehicles && fromNode < numVehicles + numOrders &&
+                    toNode >= numVehicles && toNode < numVehicles + numOrders)
+                {
+                    var fromOrd = orders[fromNode - numVehicles];
+                    var toOrd = orders[toNode - numVehicles];
+
+                    // Штраф за смену района в середине маршрута: закрываем все заявки в районе перед переездом
+                    if (!string.IsNullOrWhiteSpace(fromOrd.District) && !string.IsNullOrWhiteSpace(toOrd.District) &&
+                        !string.Equals(fromOrd.District, toOrd.District, StringComparison.OrdinalIgnoreCase))
+                    {
+                        cost += 800;
+                    }
+
+                    // Прогрессивный квадратичный штраф за длинные перегоны между заявками (> 5.5 км)
+                    if (distKm > 5.5)
+                    {
+                        double excessKm = distKm - 5.5;
+                        cost += (long)Math.Round(excessKm * excessKm * 500.0);
+                    }
                 }
 
                 return cost;
@@ -281,7 +310,11 @@ public class OrToolsVrpSolver
         RoutingSearchParameters searchParameters = operations_research_constraint_solver.DefaultRoutingSearchParameters();
         searchParameters.FirstSolutionStrategy = FirstSolutionStrategy.Types.Value.ParallelCheapestInsertion;
         searchParameters.LocalSearchMetaheuristic = LocalSearchMetaheuristic.Types.Value.GuidedLocalSearch;
-        searchParameters.GuidedLocalSearchLambdaCoefficient = 0.25;
+        searchParameters.GuidedLocalSearchLambdaCoefficient = 0.5;
+        searchParameters.LocalSearchOperators.UseRelocateSubtrip = Google.OrTools.Util.OptionalBoolean.BoolTrue;
+        searchParameters.LocalSearchOperators.UseCrossExchange = Google.OrTools.Util.OptionalBoolean.BoolTrue;
+        searchParameters.LocalSearchOperators.UseExchangeSubtrip = Google.OrTools.Util.OptionalBoolean.BoolTrue;
+        searchParameters.LocalSearchOperators.UseRelocateNeighbors = Google.OrTools.Util.OptionalBoolean.BoolTrue;
         searchParameters.TimeLimit = new Google.Protobuf.WellKnownTypes.Duration
         {
             Seconds = Math.Max(1, timeLimitSeconds > 0 ? timeLimitSeconds : DefaultTimeLimitSeconds)
