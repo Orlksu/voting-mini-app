@@ -231,6 +231,28 @@ public class WorkOrderRepository(AppDbContext db) : IWorkOrderRepository
         await query.ExecuteUpdateAsync(setters => setters.SetProperty(w => w.Status, newStatus), ct);
     }
 
+    public async Task ResetOrphanedOrdersAsync(Guid engineerId, DateTimeOffset now, CancellationToken ct = default)
+    {
+        var activeRoute = await db.EngineerRoutes
+            .Where(r => r.EngineerId == engineerId)
+            .OrderByDescending(r => r.CreatedAt)
+            .FirstOrDefaultAsync(ct);
+
+        if (activeRoute == null) return;
+
+        var stopOrderIds = await db.RouteStops
+            .Where(s => s.EngineerRouteId == activeRoute.Id && s.ServiceEnd > now && s.OrderId != null)
+            .Select(s => s.OrderId!.Value)
+            .ToListAsync(ct);
+
+        if (stopOrderIds.Count > 0)
+        {
+            await db.WorkOrders
+                .Where(w => stopOrderIds.Contains(w.Id))
+                .ExecuteUpdateAsync(s => s.SetProperty(w => w.Status, OrderStatus.NotDispatched), ct);
+        }
+    }
+
     public async Task UpdateAsync(WorkOrder order, CancellationToken ct = default)
     {
         if (db.Entry(order).State == EntityState.Detached)

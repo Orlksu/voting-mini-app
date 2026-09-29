@@ -39,11 +39,11 @@ public sealed class LivePlanStateBuilder(
     /// </summary>
     /// <param name="now">Момент времени, на который строится срез.</param>
     /// <param name="ct">Токен отмены.</param>
-    public async Task<List<EngineerLiveContext>> BuildAsync(DateTimeOffset now, CancellationToken ct)
+    public async Task<(List<EngineerLiveContext> Contexts, HashSet<string> OrphanedOrderIds)> BuildAsync(DateTimeOffset now, CancellationToken ct)
     {
         var lastResult = jobStore.LastResult;
         if (lastResult == null)
-            return [];
+            return ([], new HashSet<string>(StringComparer.OrdinalIgnoreCase));
 
         // Загружаем всех инженеров из БД для получения координат депо
         var allEngineers = await engineerRepo.GetAvailableEngineersAsync(ct: ct);
@@ -52,11 +52,21 @@ public sealed class LivePlanStateBuilder(
             .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
 
         var contexts = new List<EngineerLiveContext>();
+        var orphanedOrderIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var route in lastResult.Routes)
         {
             if (!engineerMap.TryGetValue(route.EngineerExternalId, out var engEntity))
+            {
+                foreach (var stop in route.Stops)
+                {
+                    if (stop.ServiceEnd > now)
+                    {
+                        orphanedOrderIds.Add(stop.ExternalOrderId.Trim());
+                    }
+                }
                 continue;
+            }
 
             var completedIds = new List<string>();
             var pendingStops = new List<RouteStopDto>();
@@ -94,7 +104,7 @@ public sealed class LivePlanStateBuilder(
             contexts.Add(new EngineerLiveContext(engineerDto, pendingStops, completedIds));
         }
 
-        return contexts;
+        return (contexts, orphanedOrderIds);
     }
 
     /// <summary>
@@ -104,6 +114,7 @@ public sealed class LivePlanStateBuilder(
     /// </summary>
     public async Task<List<WorkOrderInputDto>> BuildRemainingOrdersAsync(
         List<EngineerLiveContext> contexts,
+        HashSet<string> orphanedOrderIds,
         DateTimeOffset? targetDate,
         string? excludeExternalId,
         CancellationToken ct)
@@ -115,6 +126,11 @@ public sealed class LivePlanStateBuilder(
             .SelectMany(c => c.PendingStops)
             .Select(s => s.ExternalOrderId.Trim())
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            
+        foreach (var id in orphanedOrderIds)
+        {
+            pendingExtIds.Add(id);
+        }
 
         var all = new List<WorkOrderInputDto>();
 

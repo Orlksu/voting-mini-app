@@ -101,10 +101,26 @@ public class EngineersController(
     [HttpDelete("{id}")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<IActionResult> Delete(string id, CancellationToken ct)
+    public async Task<IActionResult> Delete(string id, [FromQuery] DateTimeOffset? currentTime = null, CancellationToken ct = default)
     {
-        var deleted = await engineerService.DeleteEngineerByIdentifierAsync(id, ct);
+        var deleted = await engineerService.DeleteEngineerByIdentifierAsync(id, currentTime, ct);
         return deleted ? NoContent() : NotFound("Инженер не найден.");
+    }
+
+    /// <summary>
+    /// Переключение статуса доступности инженера (IsAvailable).
+    /// Заявки недоступного инженера вернутся в перераспределение при следующем реплане.
+    /// </summary>
+    [HttpPatch("{id}/availability")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> ToggleAvailability(string id, [FromQuery] bool isAvailable, [FromQuery] DateTimeOffset? currentTime = null, CancellationToken ct = default)
+    {
+        var engineer = await engineerService.GetEngineerByIdentifierAsync(id, ct);
+        if (engineer is null) return NotFound("Инженер не найден.");
+        
+        await engineerService.UpdateAvailabilityAsync(engineer.Id, isAvailable, currentTime, ct);
+        return NoContent();
     }
 
     [HttpGet("{id}")]

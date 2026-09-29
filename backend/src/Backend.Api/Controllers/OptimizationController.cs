@@ -181,7 +181,15 @@ public class OptimizationController : ControllerBase
         List<WorkOrderInputDto> finalOrders;
 
         // Пытаемся использовать Live State (учет реального/симулированного времени суток)
-        var contexts = isToday ? await _liveState.BuildAsync(nowUtc, ct) : [];
+        var contexts = new List<LivePlanStateBuilder.EngineerLiveContext>();
+        var orphanedOrderIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        if (isToday)
+        {
+            var liveResult = await _liveState.BuildAsync(nowUtc, ct);
+            contexts = liveResult.Contexts;
+            orphanedOrderIds = liveResult.OrphanedOrderIds;
+        }
 
         if (isToday && contexts.Count > 0)
         {
@@ -197,7 +205,7 @@ public class OptimizationController : ControllerBase
                 allEngineers.Add(ctx != null ? ctx.Engineer : baseEng);
             }
             
-            var allRemaining = await _liveState.BuildRemainingOrdersAsync(contexts, targetDate, null, ct);
+            var allRemaining = await _liveState.BuildRemainingOrdersAsync(contexts, orphanedOrderIds, targetDate, null, ct);
 
             finalEngineers = allEngineers;
             finalOrders = allRemaining; // Оптимизатор сам разберется с District Penalty
@@ -333,7 +341,9 @@ public class OptimizationController : ControllerBase
         var mskOffset = TimeSpan.FromHours(3);
 
         // 1. Строим live-состояние каждого инженера по времени now
-        var contexts = await _liveState.BuildAsync(now, ct);
+        var liveResult = await _liveState.BuildAsync(now, ct);
+        var contexts = liveResult.Contexts;
+        var orphanedOrderIds = liveResult.OrphanedOrderIds;
 
         // 2. Берём всех инженеров из БД, накладываем на них Live State (если есть)
         var engEntities = await _engineers.GetAvailableEngineersAsync(ct: ct);
@@ -364,6 +374,7 @@ public class OptimizationController : ControllerBase
       
         var remainingOrders = await _liveState.BuildRemainingOrdersAsync(
             contexts,
+            orphanedOrderIds,
             targetDate: now.ToOffset(mskOffset).Date == DateTimeOffset.UtcNow.ToOffset(mskOffset).Date
                 ? null
                 : now,

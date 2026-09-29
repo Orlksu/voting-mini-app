@@ -146,7 +146,10 @@ public class WorkOrdersController(
                 try
                 {
                     var now = DateTimeOffset.UtcNow;
-                    var contexts = await liveState.BuildAsync(now, ct);
+                    var liveResult = await liveState.BuildAsync(now, ct);
+                    var contexts = liveResult.Contexts;
+                    var orphaned = liveResult.OrphanedOrderIds;
+                    
                     var engineers = contexts.Count > 0
                         ? contexts.Select(c => c.Engineer).ToList()
                         : optimizationJobStore.LastEngineers ?? [];
@@ -156,6 +159,7 @@ public class WorkOrdersController(
                         // Собираем оставшиеся заявки, исключая отменённую
                         var remainingOrders = await liveState.BuildRemainingOrdersAsync(
                             contexts,
+                            orphaned,
                             targetDate: null,
                             excludeExternalId: result.ExternalId,
                             ct);
