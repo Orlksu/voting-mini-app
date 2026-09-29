@@ -40,3 +40,102 @@
   flex-direction: column;
   gap: 5px;
 }
+
+.deleteButton {
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 15px;
+  padding: 8px 20px;
+
+  font: inherit;
+  font-size: 18px;
+  color: #e5484d;
+  background: transparent;
+  border: 2px solid rgb(229 72 77 / 50%);
+  border-radius: 20px;
+  transition: background 0.2s ease-in-out;
+
+  span {
+    font-size: 20px;
+  }
+}
+
+.deleteButton:hover {
+  background: rgb(229 72 77 / 12%);
+}
+
+.deleteConfirm {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 15px;
+  padding: 15px;
+
+  background: rgb(229 72 77 / 10%);
+  border: 2px solid rgb(229 72 77 / 50%);
+  border-radius: 20px;
+}
+
+.deleteTitle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+
+  font-size: 18px;
+  color: white;
+
+  span {
+    font-size: 22px;
+    color: #e5484d;
+  }
+}
+
+.deleteConsequences {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding-left: 20px;
+
+  font-size: 15px;
+  color: #d9d9d9;
+}
+
+.deleteError {
+  font-size: 15px;
+  color: #ff6b6b;
+}
+
+.deleteActions {
+  display: flex;
+  gap: 10px;
+
+  button {
+    cursor: pointer;
+    flex: 1;
+    padding: 8px 0;
+
+    font: inherit;
+    font-size: 17px;
+    border: none;
+    border-radius: 20px;
+  }
+
+  button:disabled {
+    cursor: default;
+    opacity: 0.6;
+  }
+}
+
+.cancelButton {
+  color: #b3b3b3;
+  background: rgba(37, 37, 37, 1);
+}
+
+.confirmDeleteButton {
+  color: white;
+  background: #e5484d;
+}

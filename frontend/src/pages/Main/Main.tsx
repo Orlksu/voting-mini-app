@@ -6,9 +6,13 @@ import EngineerList from '../../components/EngineerList/EngineerList.tsx'
 import RequestsModal from '../../components/RequestsModal/RequestsModal.tsx'
 import UploadCsvModal from '../../components/UploadCsvModal/UploadCsvModal.tsx'
 import ImportProgress from '../../components/JobProgress/ImportProgress.tsx'
+import type { ImportTarget } from '../../components/JobProgress/ImportProgress.tsx'
+import AddBrigadesModal from '../../components/AddBrigadesModal/AddBrigadesModal.tsx'
+import type { CsvUpload } from '../../components/CsvUploadForm/CsvUploadForm.tsx'
 import OptimizationProgress from '../../components/JobProgress/OptimizationProgress.tsx'
 import JobProgressCard from '../../components/JobProgress/JobProgressCard.tsx'
 import JobProgressStack from '../../components/JobProgress/JobProgressStack.tsx'
+import DeletedBrigadeNotice from '../../components/JobProgress/DeletedBrigadeNotice.tsx'
 import OptimizationResultModal from '../../components/OptimizationResultModal/OptimizationResultModal.tsx'
 import { engineersApi } from '../../logic/engineerApi'
 import type { Engineer } from '../../types/engineer'
@@ -26,6 +30,7 @@ type ProgressJob = {
   jobId: string
   fileName?: string
   mode?: OptimizationMode
+  target?: ImportTarget
 }
 
 const PROGRESS_JOBS_STORAGE_KEY = 'progressJobs'
@@ -47,7 +52,12 @@ function parseProgressJob(value: unknown): ProgressJob | null {
       'mode' in value && (value.mode === 'optimize' || value.mode === 'replan')
         ? value.mode
         : undefined
-    return { type: value.type, jobId: value.jobId, fileName, mode }
+    const target =
+      'target' in value &&
+      (value.target === 'orders' || value.target === 'engineers')
+        ? value.target
+        : undefined
+    return { type: value.type, jobId: value.jobId, fileName, mode, target }
   }
   return null
 }
@@ -84,6 +94,11 @@ export default function Main() {
   const isBrigadesOpen = activePanel === 'brigades'
   const isRequestsOpen = activePanel === 'requests'
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false)
+  const [isAddBrigadesOpen, setIsAddBrigadesOpen] = useState(false)
+  const [deletedBrigade, setDeletedBrigade] = useState<{
+    name: string
+    assignedOrdersCount: number | null
+  } | null>(null)
   const [progressJobs, setProgressJobs] = useState<ProgressJob[]>(
     readStoredProgressJobs,
   )
@@ -165,6 +180,11 @@ export default function Main() {
     setOrders(await orderApi.getAll())
   }, [])
 
+  const reloadEngineers = useCallback(async () => {
+    orderEngineerIndexRef.current = null
+    setEngineers(await engineersApi.getAll())
+  }, [])
+
   const handleOptimizationCompleted = useCallback(
     async (result: OptimizationResult) => {
       orderEngineerIndexRef.current = null
@@ -198,15 +218,28 @@ export default function Main() {
     setProgressJobs((jobs) => jobs.filter((job) => job.jobId !== jobId))
   }
 
-  const handleUploaded = (
-    uploads: { jobId: string; fileName: string }[],
-    isAllUploaded: boolean,
-  ) => {
-    if (isAllUploaded) setIsUploadModalOpen(false)
+  const addImportJobs = (uploads: CsvUpload[], target: ImportTarget) => {
     setProgressJobs((jobs) => [
       ...jobs,
-      ...uploads.map((upload) => ({ type: 'import' as const, ...upload })),
+      ...uploads.map((upload) => ({
+        type: 'import' as const,
+        target,
+        ...upload,
+      })),
     ])
+  }
+
+  const handleUploaded = (uploads: CsvUpload[], isAllUploaded: boolean) => {
+    if (isAllUploaded) setIsUploadModalOpen(false)
+    addImportJobs(uploads, 'orders')
+  }
+
+  const handleBrigadesUploaded = (
+    uploads: CsvUpload[],
+    isAllUploaded: boolean,
+  ) => {
+    if (isAllUploaded) setIsAddBrigadesOpen(false)
+    addImportJobs(uploads, 'engineers')
   }
 
   const startOptimization = async (mode: OptimizationMode = 'optimize') => {
@@ -354,6 +387,43 @@ export default function Main() {
         ? 'notFound'
         : 'loading'
   const isShowingRoute = routeStatus === 'ready'
+  const knownDistricts = [
+    ...new Set(orders.map((order) => order.district ?? '').filter(Boolean)),
+  ]
+  const activeRouteOrdersCount =
+    routeStatus === 'ready'
+      ? (engineerRoute?.stops.length ?? 0)
+      : routeStatus === 'empty' || routeStatus === 'notFound'
+        ? 0
+        : null
+
+  const handleBrigadeCreated = async (externalId: string) => {
+    orderEngineerIndexRef.current = null
+    const engineersData = await engineersApi.getAll()
+    setEngineers(engineersData)
+    setIsAddBrigadesOpen(false)
+
+    const created = engineersData.find(
+      (engineer) => engineer.externalId === externalId,
+    )
+    setActivePanel('brigades')
+    if (created) handleActiveEngineerChange(created.id)
+  }
+
+  const handleDeleteEngineer = async (engineer: Engineer) => {
+    const assignedOrdersCount =
+      engineer.id === activeEngineerId ? activeRouteOrdersCount : null
+
+    await engineersApi.remove(engineer.id)
+
+    handleActiveEngineerChange(null)
+    setDeletedBrigade({ name: engineer.name, assignedOrdersCount })
+    try {
+      await Promise.all([reloadEngineers(), reloadOrders()])
+    } catch {
+      setError('Бригада удалена, но список не обновился')
+    }
+  }
 
   const selectedOrder = selectedOrderId
     ? (orders.find((order) => order.externalId === selectedOrderId) ??
@@ -399,7 +469,10 @@ export default function Main() {
               error={error}
               activeEngineerId={activeEngineerId}
               routeStatus={routeStatus}
+              activeRouteOrdersCount={activeRouteOrdersCount}
               onActiveEngineerChange={handleActiveEngineerChange}
+              onAddClick={() => setIsAddBrigadesOpen(true)}
+              onDelete={handleDeleteEngineer}
             />
           )}
         </div>
@@ -420,6 +493,15 @@ export default function Main() {
         onUploaded={handleUploaded}
       />
 
+      <AddBrigadesModal
+        isOpen={isAddBrigadesOpen}
+        engineers={engineers}
+        knownDistricts={knownDistricts}
+        onClose={() => setIsAddBrigadesOpen(false)}
+        onUploaded={handleBrigadesUploaded}
+        onCreated={handleBrigadeCreated}
+      />
+
       <OptimizationResultModal
         isOpen={activePanel === 'result'}
         result={optimizationResult}
@@ -434,21 +516,37 @@ export default function Main() {
       <JobProgressStack>
         {progressJobs.map((job) =>
           job.type === 'import' ? (
-            <ImportProgress
-              key={job.jobId}
-              jobId={job.jobId}
-              fileName={job.fileName}
-              onCompleted={reloadOrders}
-              onClose={() => removeProgressJob(job.jobId)}
-              onShowOrders={() => {
-                removeProgressJob(job.jobId)
-                handleRequestsClick()
-              }}
-              onOptimize={() => {
-                removeProgressJob(job.jobId)
-                void startOptimization('optimize')
-              }}
-            />
+            job.target === 'engineers' ? (
+              <ImportProgress
+                key={job.jobId}
+                jobId={job.jobId}
+                target="engineers"
+                fileName={job.fileName}
+                onCompleted={reloadEngineers}
+                onClose={() => removeProgressJob(job.jobId)}
+                onShow={() => {
+                  removeProgressJob(job.jobId)
+                  setActivePanel('brigades')
+                }}
+              />
+            ) : (
+              <ImportProgress
+                key={job.jobId}
+                jobId={job.jobId}
+                target="orders"
+                fileName={job.fileName}
+                onCompleted={reloadOrders}
+                onClose={() => removeProgressJob(job.jobId)}
+                onShow={() => {
+                  removeProgressJob(job.jobId)
+                  handleRequestsClick()
+                }}
+                onOptimize={() => {
+                  removeProgressJob(job.jobId)
+                  void startOptimization('optimize')
+                }}
+              />
+            )
           ) : (
             <OptimizationProgress
               key={job.jobId}
@@ -466,6 +564,18 @@ export default function Main() {
               onClose={() => removeProgressJob(job.jobId)}
             />
           ),
+        )}
+
+        {deletedBrigade && (
+          <DeletedBrigadeNotice
+            name={deletedBrigade.name}
+            assignedOrdersCount={deletedBrigade.assignedOrdersCount}
+            onClose={() => setDeletedBrigade(null)}
+            onReplan={() => {
+              setDeletedBrigade(null)
+              void startOptimization('replan')
+            }}
+          />
         )}
 
         {optimizationError && (

@@ -1,0 +1,286 @@
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.modal {
+  display: flex;
+  flex-direction: column;
+  gap: 25px;
+
+  width: min(600px, calc(100vw - 60px));
+  max-height: calc(100vh - 60px);
+  padding: 30px;
+  overflow-y: auto;
+
+  background-color: rgb(27, 26, 26, 0.8);
+  border-radius: 30px;
+  color: #b3b3b3;
+
+  &::-webkit-scrollbar {
+    width: 12px;
+  }
+
+  &::-webkit-scrollbar-track {
+    margin: 25px 0;
+    background: transparent;
+  }
+
+  &::-webkit-scrollbar-thumb {
+    background: #eabe5f;
+    background-clip: padding-box;
+    border: 3px solid transparent;
+    border-radius: 30px;
+  }
+}
+
+@supports not selector(::-webkit-scrollbar) {
+  .modal {
+    scrollbar-color: #eabe5f transparent;
+  }
+}
+
+.title {
+  text-align: center;
+  font-size: 37px;
+}
+
+.tabs {
+  display: flex;
+  align-self: center;
+  gap: 10px;
+  padding: 7px 10px;
+
+  background: #292929;
+  border-radius: 30px;
+
+  button {
+    cursor: pointer;
+    padding: 5px 30px;
+
+    font: inherit;
+    font-size: 18px;
+    color: #b3b3b3;
+    background: transparent;
+    border: none;
+    border-radius: 30px;
+    transition: 0.2s all ease-in-out;
+  }
+
+  button:disabled {
+    cursor: default;
+  }
+
+  .tabActive {
+    color: #0f0f0f;
+    background: #fbb72c;
+  }
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+.formHint {
+  font-size: 16px;
+  text-align: center;
+}
+
+.formId {
+  font-family: var(--font-mono);
+  color: rgb(234 190 95);
+}
+
+.field {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+
+  font-size: 14px;
+  color: #7a7a7a;
+
+  input,
+  select {
+    width: 100%;
+    padding: 12px 15px;
+
+    font: inherit;
+    font-size: 17px;
+    color: white;
+    background: rgba(37, 37, 37, 1);
+    border: 1px solid transparent;
+    border-radius: 15px;
+    outline: none;
+    color-scheme: dark;
+  }
+
+  input:focus,
+  select:focus {
+    border-color: rgb(234 190 95 / 60%);
+  }
+
+  input::placeholder {
+    color: #5c5c5c;
+  }
+}
+
+.row {
+  display: flex;
+  gap: 10px;
+}
+
+.skills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  border: none;
+
+  legend {
+    margin-bottom: 6px;
+    padding: 0;
+    font-size: 14px;
+    color: #7a7a7a;
+  }
+}
+
+.skill {
+  cursor: pointer;
+  padding: 8px 16px;
+
+  font-size: 16px;
+  color: #b3b3b3;
+  background: rgba(37, 37, 37, 1);
+  border: 1px solid transparent;
+  border-radius: 30px;
+  transition: 0.2s all ease-in-out;
+
+  input {
+    display: none;
+  }
+}
+
+.skillActive {
+  color: rgb(234 190 95);
+  border-color: rgb(234 190 95 / 60%);
+}
+
+.error {
+  white-space: pre-line;
+  text-align: center;
+  font-size: 16px;
+  color: #ff6b6b;
+}
+
+.submit {
+  cursor: pointer;
+  align-self: center;
+  margin-top: 5px;
+  padding: 12px 40px;
+
+  font: inherit;
+  font-size: 20px;
+  color: #0f0f0f;
+  background: #fbb72c;
+  border: none;
+  border-radius: 30px;
+}
+
+.submit:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+.addressField {
+  position: relative;
+
+  input {
+    padding-right: 44px;
+  }
+}
+
+.addressSpinner {
+  position: absolute;
+  top: 12px;
+  right: 14px;
+
+  font-size: 20px;
+  color: rgb(234 190 95);
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.suggestions {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  left: 0;
+  z-index: 5;
+
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 8px;
+  list-style: none;
+
+  background: #101010;
+  border: 1px solid rgb(234 190 95 / 30%);
+  border-radius: 15px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.5);
+}
+
+.suggestion {
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+
+  font-size: 15px;
+  color: white;
+  border-radius: 10px;
+}
+
+.suggestionActive {
+  background: rgba(234, 190, 95, 0.15);
+}
+
+.suggestionDistrict {
+  font-size: 13px;
+  color: rgb(234 190 95);
+}
+
+.suggestionEmpty {
+  padding: 10px 12px;
+  font-size: 15px;
+  color: #7a7a7a;
+}
+
+.addressError {
+  margin-top: 6px;
+  font-size: 13px;
+  color: #ff6b6b;
+}
+
+.districtHint {
+  font-size: 13px;
+  color: rgb(234 190 95);
+}
