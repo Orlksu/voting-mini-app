@@ -59,7 +59,7 @@ export default function Header({
 
   return (
     <div className={styles.headerContainer}>
-      <p className={styles.title}>SMART ROUTING</p>
+      <p className={styles.logo}>smart routing</p>
       <div className={styles.buttons}>
         <nav>
           <p
