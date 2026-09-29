@@ -25,3 +25,10 @@ services:
 
   valhalla:
     ports: !reset []
+    environment:
+      # Число потоков и для сборки тайлов, и для сервиса. На VM с 2 ГБ RAM сборку графа
+      # Москвы с областью запускать с VALHALLA_SERVER_THREADS=1 (docs/valhalla.md).
+      - server_threads=${VALHALLA_SERVER_THREADS:-2}
+    healthcheck:
+      # Сборка графа на staging VM идёт долго; до готовности тайлов /status не отвечает.
+      start_period: 180m

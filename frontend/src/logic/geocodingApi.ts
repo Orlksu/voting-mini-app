@@ -1,7 +1,7 @@
 const mapTilerApiKey = import.meta.env.VITE_MAPTILER_API_KEY
 
-// Москва и ближняя область, поиск смещён к центру
-const SEARCH_BBOX = '36.8,55.1,38.4,56.1'
+// Москва и Московская область, поиск смещён к центру
+const SEARCH_BBOX = '35.1,54.2,40.3,57.0'
 const SEARCH_PROXIMITY = '37.6176,55.7558'
 
 export type AddressSuggestion = {
