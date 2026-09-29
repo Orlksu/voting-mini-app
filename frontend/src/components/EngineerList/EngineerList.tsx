@@ -5,11 +5,7 @@ import { useState } from 'react'
 import EngineerDetails from './EngineerDetails/EngineerDetails.tsx'
 
 export type EngineerRouteStatus =
-  | 'idle'
-  | 'loading'
-  | 'ready'
-  | 'empty'
-  | 'notFound'
+  'idle' | 'loading' | 'ready' | 'empty' | 'notFound'
 
 type EngineerListProps = {
   engineers: Engineer[]
@@ -18,6 +14,7 @@ type EngineerListProps = {
   activeEngineerId: string | null
   routeStatus: EngineerRouteStatus
   onActiveEngineerChange: (engineerId: string | null) => void
+  onAddClick: () => void
 }
 
 export default function EngineerList({
@@ -27,6 +24,7 @@ export default function EngineerList({
   activeEngineerId,
   routeStatus,
   onActiveEngineerChange,
+  onAddClick,
 }: EngineerListProps) {
   const [detailsEngineerId, setDetailsEngineerId] = useState<string | null>(
     null,
@@ -49,7 +47,21 @@ export default function EngineerList({
       {!isLoading && !error && (
         <>
           {!openedDetailsId && (
-            <p className={styles.titleList}>список бригад</p>
+            <div className={styles.titleRow}>
+              <p className={styles.titleList}>список бригад</p>
+              <button
+                type="button"
+                className={styles.addButton}
+                onClick={onAddClick}
+                aria-label="Добавить бригады"
+                title="Добавить бригады"
+              >
+                <span className="material-symbols-rounded">add</span>
+              </button>
+            </div>
+          )}
+          {!openedDetailsId && engineers.length === 0 && (
+            <p className={styles.empty}>бригад пока нет</p>
           )}
           <div className={styles.listScrollArea}>
             <div className={styles.listScrollViewport}>

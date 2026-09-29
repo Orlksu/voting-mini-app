@@ -3,34 +3,91 @@ import styles from './JobProgress.module.css'
 import JobProgressCard from './JobProgressCard.tsx'
 import { isNotFoundError } from '../../api/api.ts'
 import { orderApi } from '../../logic/orderApi.ts'
-import type { OrderImportJob } from '../../types/orderImport.ts'
+import { engineersApi } from '../../logic/engineerApi.ts'
+import type { JobStatus } from '../../types/optimization.ts'
 
 const POLL_INTERVAL_MS = 1000
 const MAX_POLL_FAILURES = 3
 
+export type ImportTarget = 'orders' | 'engineers'
+
+type ImportJobView = {
+  status: JobStatus
+  totalItems: number
+  processedItems: number
+  progressPercent: number
+  currentStage: string
+  errorMessage: string | null
+  resultText: string | null
+}
+
+async function fetchImportJob(
+  target: ImportTarget,
+  jobId: string,
+  signal: AbortSignal,
+): Promise<ImportJobView> {
+  if (target === 'engineers') {
+    const job = await engineersApi.getImportJob(jobId, signal)
+    return {
+      ...job,
+      resultText: job.result
+        ? [
+            `добавлено бригад: ${job.result.imported}`,
+            job.result.skipped > 0 && `пропущено: ${job.result.skipped}`,
+            job.result.unresolvedAddresses > 0 &&
+              `адрес не найден: ${job.result.unresolvedAddresses}`,
+          ]
+            .filter(Boolean)
+            .join(', ')
+        : null,
+    }
+  }
+
+  const job = await orderApi.getImportJob(jobId, signal)
+  return {
+    ...job,
+    resultText: job.result
+      ? [
+          `загружено: ${job.result.importedOrdersCount}`,
+          job.result.unresolvedAddressesCount > 0 &&
+            `адрес не найден: ${job.result.unresolvedAddressesCount}`,
+        ]
+          .filter(Boolean)
+          .join(', ')
+      : null,
+  }
+}
+
 // бэкенд может вернуть Processing уже после завершения (поздний Progress.Report), result при этом заполнен
-function isCompleted(job: OrderImportJob) {
-  return job.status === 'Completed' || job.result !== null
+function isCompleted(job: ImportJobView) {
+  return job.status === 'Completed' || job.resultText !== null
+}
+
+const TITLES: Record<ImportTarget, string> = {
+  orders: 'импорт заявок',
+  engineers: 'импорт бригад',
 }
 
 type ImportProgressProps = {
   jobId: string
+  target: ImportTarget
   fileName?: string
   onCompleted: () => Promise<void>
   onClose: () => void
-  onShowOrders: () => void
-  onOptimize: () => void
+  onShow: () => void
+  onOptimize?: () => void
 }
 
 export default function ImportProgress({
   jobId,
+  target,
   fileName,
   onCompleted,
   onClose,
-  onShowOrders,
+  onShow,
   onOptimize,
 }: ImportProgressProps) {
-  const [job, setJob] = useState<OrderImportJob | null>(null)
+  const [job, setJob] = useState<ImportJobView | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [refreshError, setRefreshError] = useState<string | null>(null)
 
@@ -40,10 +97,10 @@ export default function ImportProgress({
     let failures = 0
 
     const poll = async () => {
-      let status: OrderImportJob
+      let status: ImportJobView
 
       try {
-        status = await orderApi.getImportJob(jobId, controller.signal)
+        status = await fetchImportJob(target, jobId, controller.signal)
         failures = 0
       } catch (pollError) {
         if (controller.signal.aborted) return
@@ -66,7 +123,7 @@ export default function ImportProgress({
           await onCompleted()
         } catch {
           if (!controller.signal.aborted) {
-            setRefreshError('Заявки загружены, но карта не обновилась')
+            setRefreshError('Данные загружены, но карта не обновилась')
           }
         }
         return
@@ -82,7 +139,7 @@ export default function ImportProgress({
       controller.abort()
       clearTimeout(timeoutId)
     }
-  }, [jobId, onCompleted])
+  }, [jobId, target, onCompleted])
 
   const isDone = job !== null && isCompleted(job)
   const isFinished = isDone || job?.status === 'Failed' || error !== null
@@ -90,10 +147,9 @@ export default function ImportProgress({
 
   return (
     <JobProgressCard
-      title={fileName ? `импорт: ${fileName}` : 'импорт заявок'}
+      title={fileName ? `${TITLES[target]}: ${fileName}` : TITLES[target]}
       onClose={isFinished ? onClose : undefined}
     >
-
       {error ? (
         <p className={styles.error}>{error}</p>
       ) : job?.status === 'Failed' ? (
@@ -113,28 +169,28 @@ export default function ImportProgress({
         </>
       )}
 
-      {isDone && job.result && (
+      {isDone && job.resultText && (
         <>
-          <p className={styles.result}>
-            загружено: {job.result.importedOrdersCount}
-            {job.result.unresolvedAddressesCount > 0 &&
-              `, адрес не найден: ${job.result.unresolvedAddressesCount}`}
-          </p>
+          <p className={styles.result}>{job.resultText}</p>
           <div className={styles.actions}>
             <button
               type="button"
               className={styles.secondaryAction}
-              onClick={onShowOrders}
+              onClick={onShow}
             >
-              посмотреть заявки
+              {target === 'engineers'
+                ? 'посмотреть бригады'
+                : 'посмотреть заявки'}
             </button>
-            <button
-              type="button"
-              className={styles.primaryAction}
-              onClick={onOptimize}
-            >
-              распределить
-            </button>
+            {onOptimize && (
+              <button
+                type="button"
+                className={styles.primaryAction}
+                onClick={onOptimize}
+              >
+                распределить
+              </button>
+            )}
           </div>
         </>
       )}
