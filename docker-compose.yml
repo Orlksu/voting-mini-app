@@ -55,10 +55,12 @@ services:
     ports:
       - "8002:8002"
     environment:
-      # Москва и Московская область — два соседних субъекта, граф собирается из обоих.
-      # URL скачиваются, только если в valhalla-data нет ни .pbf, ни тайлов:
-      # смена ссылок сама по себе не пересобирает уже готовый граф (см. docs/valhalla.md).
-      - tile_urls=https://download.openstreetmap.fr/extracts/russia/central_federal_district/moscow-latest.osm.pbf https://download.openstreetmap.fr/extracts/russia/central_federal_district/moscow_oblast-latest.osm.pbf
+      # Запасной вариант: только Москва (BBBike). Скачивается, лишь если в
+      # valhalla-data нет ни .pbf, ни тайлов. Граф Москвы с областью готовится
+      # скриптом scripts/prepare-valhalla-region.sh (см. docs/valhalla.md).
+      # Две выгрузки через пробел сюда не ставить: из-за дублей на границе
+      # сборка зависает на этапе complex turn restrictions.
+      - tile_urls=https://download.bbbike.org/osm/bbbike/Moscow/Moscow.osm.pbf
       - build_elevation=False
       - build_admins=False
       - build_time_zones=False
