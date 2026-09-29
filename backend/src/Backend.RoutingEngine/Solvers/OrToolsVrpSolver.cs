@@ -13,8 +13,19 @@ public class OrToolsVrpSolver
     private const long MaxHorizonMinutes = 24 * 60;
     private const int DefaultTimeLimitSeconds = 25;
     private const double MaxPedestrianFromDepotKm = 2.0;
-    private const double MaxPedestrianLegKm = 1.8;
+    private const double MaxPedestrianLegKm = 2.0;
     private const double MaxTransitLegKm = 6.5;
+
+    // Штрафы за дроп заявки: разрыв 10× гарантирует, что Emergency никогда не вытесняется Normal/Low.
+    // Base + Priority = итоговый штраф за неназначение.
+    private const long PenaltyEmergency = 50_000_000;
+    private const long PenaltyHigh      = 10_000_000;
+    private const long PenaltyNormal    =  5_000_000;
+    private const long PenaltyLow       =  1_000_000;
+
+    // Штраф за межрайонный переход: возвращен на 800 (эквивалент ~8 км).
+    // Позволяет алгоритму жертвовать границами районов ради уменьшения общего пробега.
+    private const long CrossDistrictPenalty = 800;
 
     public OptimizationResultDto Solve(
         IReadOnlyList<EngineerInputDto> engineers,
@@ -91,8 +102,10 @@ public class OrToolsVrpSolver
                 if (fromNode >= numLocations || toNode >= numLocations)
                     return 0;
 
-                // Для пешехода: переходы между точками длиннее 1.8 км физически запрещены
-                if (isPedestrian && fromNode >= numVehicles && fromNode < numMatrixPoints &&
+                // Для пешехода: переходы длиннее 1.8 км физически запрещены —
+                // включая первый переход от депо (fromNode < numVehicles) до первой заявки.
+                // Условие fromNode >= numVehicles убрано намеренно: фиксирует аномалию «7 км пешком от базы».
+                if (isPedestrian && fromNode < numMatrixPoints &&
                     toNode >= numVehicles && toNode < numMatrixPoints)
                 {
                     double legDist = vDist[fromNode, toNode];
@@ -151,7 +164,7 @@ public class OrToolsVrpSolver
                     {
                         if (!string.Equals(eng.District, toOrd.District, StringComparison.OrdinalIgnoreCase))
                         {
-                            cost += 1500;
+                            cost += CrossDistrictPenalty;
                         }
                     }
                 }
@@ -167,7 +180,7 @@ public class OrToolsVrpSolver
                     if (!string.IsNullOrWhiteSpace(fromOrd.District) && !string.IsNullOrWhiteSpace(toOrd.District) &&
                         !string.Equals(fromOrd.District, toOrd.District, StringComparison.OrdinalIgnoreCase))
                     {
-                        cost += 800;
+                        cost += CrossDistrictPenalty;
                     }
 
                     // Прогрессивный квадратичный штраф за длинные перегоны между заявками (> 5.5 км)
@@ -221,8 +234,20 @@ public class OrToolsVrpSolver
             long shiftStart = (long)(eng.ShiftStart - baseTime).TotalMinutes;
             long shiftEnd = (long)(eng.ShiftEnd - baseTime).TotalMinutes;
 
+            // Начало смены жесткое
             timeDimension.CumulVar(routing.Start(i)).SetRange(Math.Max(0, shiftStart), Math.Max(0, shiftEnd));
-            timeDimension.CumulVar(routing.End(i)).SetRange(Math.Max(0, shiftStart), Math.Max(0, shiftEnd));
+            
+            // Конец смены: разрешаем переработку до 3 часов (180 минут) ради аварий!
+            long maxOvertimeEnd = shiftEnd + 180;
+            timeDimension.CumulVar(routing.End(i)).SetRange(Math.Max(0, shiftStart), Math.Max(0, maxOvertimeEnd));
+            
+            // Штраф за переработку: 200,000 у.е. за каждую минуту!
+            // Почему именно 200,000? 
+            // - Сброс Low заявки = 1,000,000 (инженер откажется задержаться даже на 5 минут ради нее)
+            // - Сброс Normal = 5,000,000 (откажется задерживаться дольше 25 минут)
+            // - Сброс High = 10,000,000 (задержится максимум на 50 минут)
+            // - Сброс Emergency = 50,000,000 (готов задержаться на 4+ часа, лишь бы спасти!)
+            timeDimension.SetCumulVarSoftUpperBound(routing.End(i), Math.Max(0, shiftEnd), 200_000);
         }
 
     
@@ -231,16 +256,33 @@ public class OrToolsVrpSolver
             var ord = orders[j];
             long index = manager.NodeToIndex(numVehicles + j);
 
-            if (!ord.WindowStart.HasValue || !ord.WindowEnd.HasValue)
+            // Если задано жесткое временное окно, ограничиваем CumulVar
+            if (ord.WindowStart.HasValue && ord.WindowEnd.HasValue)
             {
-                continue;
+                long windowStart = (long)(ord.WindowStart.Value - baseTime).TotalMinutes;
+                long windowEnd = (long)(ord.WindowEnd.Value - baseTime).TotalMinutes;
+                long latestServiceStart = windowEnd - ord.DurationMinutes;
+                timeDimension.CumulVar(index).SetRange(Math.Max(0, windowStart), Math.Max(0, latestServiceStart));
             }
 
-            long windowStart = (long)(ord.WindowStart.Value - baseTime).TotalMinutes;
-            long windowEnd = (long)(ord.WindowEnd.Value - baseTime).TotalMinutes;
-            long latestServiceStart = windowEnd - ord.DurationMinutes;
+            // Штрафуем позднее выполнение для высоких приоритетов (стимулируем выполнение ASAP)
+            // PenaltyRate: сколько у.е. штрафа за каждую минуту от старта дня (от baseTime).
+            // 1 км пути = 100 у.е.
+            long earlyPenaltyRate = ord.Priority switch
+            {
+                // Снижен с 500 до 100. 
+                // При 500 штраф за задержку аварии на 2 часа был больше, чем стоимость найма новой бригады (50,000)!
+                // Из-за этого алгоритм выводил 11 бригад, чтобы моментально закрывать аварии.
+                OrderPriority.Emergency => 100, 
+                OrderPriority.High => 20,      
+                _ => 0
+            };
 
-            timeDimension.CumulVar(index).SetRange(Math.Max(0, windowStart), Math.Max(0, latestServiceStart));
+            if (earlyPenaltyRate > 0)
+            {
+                // Применяем мягкую границу 0 (штрафуем за каждую минуту свыше 0)
+                timeDimension.SetCumulVarSoftUpperBound(index, 0, earlyPenaltyRate);
+            }
         }
 
     
@@ -278,11 +320,18 @@ public class OrToolsVrpSolver
                                     (eng.Equipment != null && ord.RequiredEquipment.All(r => eng.Equipment.Contains(r)));
 
                 // Для пешехода: если указан целевой район, разрешаем заявки только внутри этого района;
-                // если район не указан — ограничиваем радиусом от депо.
-                bool isPedestrianTooFar = eng.Transport == TransportType.Pedestrian &&
-                    (!string.IsNullOrWhiteSpace(eng.District)
-                        ? !string.Equals(eng.District, ord.District, StringComparison.OrdinalIgnoreCase)
-                        : distanceMatrix[i][i, numVehicles + j] > MaxPedestrianFromDepotKm);
+                // дополнительно всегда проверяем расстояние от депо ≤ MaxPedestrianFromDepotKm.
+                // Оба условия применяются одновременно: район сужает круг кандидатов,
+                // расстояние убирает дальние точки внутри большого района.
+                bool isPedestrianTooFar = false;
+                if (eng.Transport == TransportType.Pedestrian)
+                {
+                    bool wrongDistrict = !string.IsNullOrWhiteSpace(eng.District) &&
+                                        !string.IsNullOrWhiteSpace(ord.District) &&
+                                        !string.Equals(eng.District, ord.District, StringComparison.OrdinalIgnoreCase);
+                    bool tooFar = distanceMatrix[i][i, numVehicles + j] > MaxPedestrianFromDepotKm;
+                    isPedestrianTooFar = wrongDistrict || tooFar;
+                }
 
                 if (!hasSkill || !hasTransport || !hasEquipment || isPedestrianTooFar)
                 {
@@ -297,33 +346,39 @@ public class OrToolsVrpSolver
             var ord = orders[j];
             long index = manager.NodeToIndex(numVehicles + j);
 
-            long priorityWeight = ord.Priority switch
+            long penalty = ord.Priority switch
             {
-                OrderPriority.Emergency => 4_000_000,
-                OrderPriority.High => 800_000,        
-                OrderPriority.Normal => 150_000,      
-                OrderPriority.Low => 40_000,          
-                _ => 40_000
+                OrderPriority.Emergency => PenaltyEmergency,
+                OrderPriority.High      => PenaltyHigh,
+                OrderPriority.Normal    => PenaltyNormal,
+                OrderPriority.Low       => PenaltyLow,
+                _                       => PenaltyNormal
             };
 
-            routing.AddDisjunction(new[] { index }, UnassignedPenaltyBase + priorityWeight);
+            routing.AddDisjunction(new[] { index }, penalty);
         }
 
         
         RoutingSearchParameters searchParameters = operations_research_constraint_solver.DefaultRoutingSearchParameters();
-        searchParameters.FirstSolutionStrategy = FirstSolutionStrategy.Types.Value.Savings;
-        searchParameters.LocalSearchMetaheuristic = LocalSearchMetaheuristic.Types.Value.GuidedLocalSearch;
-        searchParameters.GuidedLocalSearchLambdaCoefficient = 0.5;
+        searchParameters.FirstSolutionStrategy = FirstSolutionStrategy.Types.Value.ParallelCheapestInsertion;
+        
+        // Tabu Search сходится к оптимальному значению гораздо быстрее и не имеет эффекта 
+        // "раскачки" (осцилляции) в конце поиска, в отличие от Guided Local Search.
+        searchParameters.LocalSearchMetaheuristic = LocalSearchMetaheuristic.Types.Value.TabuSearch;
+        
+        // Включаем обратно мощные операторы локального поиска для максимального качества
         searchParameters.LocalSearchOperators.UseRelocateSubtrip = Google.OrTools.Util.OptionalBoolean.BoolTrue;
         searchParameters.LocalSearchOperators.UseCrossExchange = Google.OrTools.Util.OptionalBoolean.BoolTrue;
         searchParameters.LocalSearchOperators.UseExchangeSubtrip = Google.OrTools.Util.OptionalBoolean.BoolTrue;
         searchParameters.LocalSearchOperators.UseRelocateNeighbors = Google.OrTools.Util.OptionalBoolean.BoolTrue;
         searchParameters.LocalSearchOperators.UseLinKernighan = Google.OrTools.Util.OptionalBoolean.BoolTrue;
         searchParameters.LocalSearchOperators.UseNodePairSwapActive = Google.OrTools.Util.OptionalBoolean.BoolTrue;
+        
         searchParameters.TimeLimit = new Google.Protobuf.WellKnownTypes.Duration
         {
-            Seconds = Math.Max(1, timeLimitSeconds > 0 ? timeLimitSeconds : 35)
+            Seconds = Math.Max(1, Math.Min(15, timeLimitSeconds > 0 ? timeLimitSeconds : 15))
         };
+        // Жесткий лимит решений убираем, так как он "душил" алгоритм слишком рано
 
         Assignment? solution = routing.SolveWithParameters(searchParameters);
 
@@ -540,7 +595,9 @@ public class OrToolsVrpSolver
                     CancelledOrdersCount: 0,
                     TotalDistanceKm: Math.Round(routeDist, 2),
                     BaselineDistanceKm: Math.Round(
-                        BaselinePlanner.ComputeRouteBaseline(i, orders, routeOrderIndexes, numVehicles, vDistance), 2),
+                        BaselinePlanner.ComputeRouteBaseline(
+                            i, orders, routeOrderIndexes, numVehicles, vDistance, vTime, 
+                            (long)(eng.ShiftStart - baseTime).TotalMinutes, routeDist), 2),
                     TotalTravelMinutes: (int)routeTravelMinutes,
                     Stops: stops,
                     EncodedPolyline: null,
@@ -562,13 +619,21 @@ public class OrToolsVrpSolver
         }
 
         double baselineDistance = globalBaseline.TotalDistanceKm;
-        if (baselineDistance <= 0 || (globalBaseline.AssignedOrders < totalAssignedOrders && routes.Count > 0))
+        
+        // Честный глобальный бейзлайн: если жадный алгоритм отбросил заказы, которые смог вписать умный алгоритм,
+        // мы не можем позволить жадному алгоритму "выиграть" в пробеге за счет того, что он просто к ним не поехал.
+        // Поэтому мы прибавляем реалистичный штраф (15 км на заказ — примерный средний путь туда-обратно) 
+        // за каждый потерянный жадным алгоритмом заказ.
+        if (globalBaseline.AssignedOrders < totalAssignedOrders)
         {
-            var sumRouteBaselines = routes.Sum(r => r.BaselineDistanceKm);
-            if (sumRouteBaselines > 0)
-            {
-                baselineDistance = sumRouteBaselines;
-            }
+            int lostOrders = totalAssignedOrders - globalBaseline.AssignedOrders;
+            baselineDistance += lostOrders * 15.0;
+        }
+
+        // Защита от нулевого бейзлайна (если глобальный вдруг вообще ничего не смог назначить)
+        if (baselineDistance <= 0 && routes.Count > 0)
+        {
+            baselineDistance = routes.Sum(r => r.BaselineDistanceKm);
         }
         double savedPercent = baselineDistance > 0 ? (baselineDistance - totalDistance) / baselineDistance * 100 : 0;
 

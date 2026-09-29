@@ -48,6 +48,8 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 builder.Services.AddSingleton<OptimizationJobStore>();
 builder.Services.AddSingleton<OrderImportJobStore>();
 builder.Services.AddSingleton<EngineerImportJobStore>();
+// LivePlanStateBuilder: scoped, т.к. зависит от IEngineerRepository / IWorkOrderRepository (scoped)
+builder.Services.AddScoped<LivePlanStateBuilder>();
 
 // Подключаем движок маршрутизации с адресом Valhalla
 var valhallaUrl = builder.Configuration["Valhalla:BaseUrl"] ?? "http://valhalla:8002";

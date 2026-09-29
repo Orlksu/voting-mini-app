@@ -1,3 +1,4 @@
+using Backend.Api.Services.GeoCodingService;
 using Backend.Api.Infrastructure.Repositories;
 using Backend.Api.Services;
 using Backend.Contracts.Domain.Entities;
@@ -20,6 +21,7 @@ public class OptimizationController : ControllerBase
     private readonly IWorkOrderRepository _workOrders;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<OptimizationController> _logger;
+    private readonly LivePlanStateBuilder _liveState;
 
     public OptimizationController(
         IRouteOptimizer optimizer,
@@ -27,7 +29,8 @@ public class OptimizationController : ControllerBase
         IEngineerRepository engineers,
         IWorkOrderRepository workOrders,
         IServiceScopeFactory scopeFactory,
-        ILogger<OptimizationController> logger)
+        ILogger<OptimizationController> logger,
+        LivePlanStateBuilder liveState)
     {
         _optimizer = optimizer;
         _jobStore = jobStore;
@@ -35,6 +38,7 @@ public class OptimizationController : ControllerBase
         _workOrders = workOrders;
         _scopeFactory = scopeFactory;
         _logger = logger;
+        _liveState = liveState;
     }
 
     /// <summary>
@@ -141,6 +145,7 @@ public class OptimizationController : ControllerBase
         [FromQuery] Guid? depotId = null,
         [FromQuery] string? district = null,
         [FromQuery] DateTimeOffset? date = null,
+        [FromQuery] DateTimeOffset? currentTime = null,
         CancellationToken ct = default)
     {
         var mskOffset = TimeSpan.FromHours(3);
@@ -167,40 +172,75 @@ public class OptimizationController : ControllerBase
             }
         }
 
-        var engEntities = await _engineers.GetAvailableEngineersAsync(depotId, district, ct);
-        var engineers = engEntities.Select(ToEngineerInputDto).ToList();
-        if (engineers.Count == 0)
-            return BadRequest("Нет доступных инженеров для перепланирования.");
+        // Если передан currentTime (симуляция) — используем его, иначе реальное время сервера
+        var nowUtc = currentTime ?? DateTimeOffset.UtcNow;
+        var nowMskCurrent = nowUtc.ToOffset(mskOffset);
+        // При симуляции считаем targetDate "сегодняшним" днём относительно переданного времени
+        bool isToday = targetDate.Date == nowMskCurrent.Date;
 
-        var woEntities = await _workOrders.GetPendingOrdersForPlanningAsync(depotId, district, targetDate, status: null, ct: ct);
-        var orders = woEntities.Select(ToWorkOrderInputDto).ToList();
-        if (orders.Count == 0)
+        List<EngineerInputDto> finalEngineers;
+        List<WorkOrderInputDto> finalOrders;
+
+        // Пытаемся использовать Live State (учет реального/симулированного времени суток)
+        var contexts = new List<LivePlanStateBuilder.EngineerLiveContext>();
+        var orphanedOrderIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        if (isToday)
+        {
+            var liveResult = await _liveState.BuildAsync(nowUtc, ct);
+            contexts = liveResult.Contexts;
+            orphanedOrderIds = liveResult.OrphanedOrderIds;
+        }
+
+        if (isToday && contexts.Count > 0)
+        {
+            _logger.LogInformation("Replan: используется Live State (от {Now})", nowUtc);
+            
+            var dbEngs = await _engineers.GetAvailableEngineersAsync(depotId, district, ct);
+            var baseEngineers = dbEngs.Select(e => AlignEngineerShift(e, nowUtc, mskOffset)).ToList();
+            var allEngineers = new List<EngineerInputDto>();
+            
+            foreach (var baseEng in baseEngineers)
+            {
+                var ctx = contexts.FirstOrDefault(c => string.Equals(c.Engineer.ExternalId, baseEng.ExternalId, StringComparison.OrdinalIgnoreCase));
+                allEngineers.Add(ctx != null ? ctx.Engineer : baseEng);
+            }
+            
+            var allRemaining = await _liveState.BuildRemainingOrdersAsync(contexts, orphanedOrderIds, targetDate, null, ct);
+
+            finalEngineers = allEngineers;
+            finalOrders = allRemaining; // Оптимизатор сам разберется с District Penalty
+        }
+        else
+        {
+            _logger.LogInformation("Replan: используется планирование с нуля (Live State недоступен или дата не сегодня)");
+            var engEntities = await _engineers.GetAvailableEngineersAsync(depotId, district, ct);
+            var engineers = engEntities.Select(ToEngineerInputDto).ToList();
+            
+            var woEntities = await _workOrders.GetPendingOrdersForPlanningAsync(depotId, district, targetDate, status: null, ct: ct);
+            var orders = woEntities.Select(ToWorkOrderInputDto).ToList();
+            
+            var planDateMsk = targetDate.ToOffset(mskOffset);
+            finalEngineers = engineers.Select(e =>
+            {
+                var shiftDuration = e.ShiftEnd - e.ShiftStart;
+                if (shiftDuration <= TimeSpan.Zero) shiftDuration += TimeSpan.FromDays(1);
+                var shiftMskStart = e.ShiftStart.ToOffset(mskOffset);
+                var alignedStartMsk = new DateTimeOffset(planDateMsk.Year, planDateMsk.Month, planDateMsk.Day, shiftMskStart.Hour, shiftMskStart.Minute, shiftMskStart.Second, mskOffset);
+                var alignedStartUtc = alignedStartMsk.ToUniversalTime();
+                return e with { ShiftStart = alignedStartUtc, ShiftEnd = alignedStartUtc + shiftDuration };
+            }).ToList();
+            
+            finalOrders = orders;
+        }
+
+        if (finalEngineers.Count == 0)
+            return BadRequest("Нет доступных инженеров для перепланирования.");
+        if (finalOrders.Count == 0)
             return BadRequest($"Нет незавершенных заявок для перепланирования на дату {targetDate:yyyy-MM-dd}.");
 
         var planDateUtc = targetDate.ToUniversalTime();
-        var planDateMsk = targetDate.ToOffset(mskOffset);
-
-        var alignedEngineers = engineers.Select(e =>
-        {
-            var shiftDuration = e.ShiftEnd - e.ShiftStart;
-            if (shiftDuration <= TimeSpan.Zero)
-            {
-                shiftDuration += TimeSpan.FromDays(1);
-            }
-
-            var shiftMskStart = e.ShiftStart.ToOffset(mskOffset);
-            var alignedStartMsk = new DateTimeOffset(
-                planDateMsk.Year, planDateMsk.Month, planDateMsk.Day,
-                shiftMskStart.Hour, shiftMskStart.Minute, shiftMskStart.Second,
-                mskOffset);
-
-            var alignedStartUtc = alignedStartMsk.ToUniversalTime();
-            var alignedEndUtc = alignedStartUtc + shiftDuration;
-
-            return e with { ShiftStart = alignedStartUtc, ShiftEnd = alignedEndUtc };
-        }).ToList();
-
-        var request = new CreateOptimizationPlanRequest(planDateUtc, alignedEngineers, orders);
+        var request = new CreateOptimizationPlanRequest(isToday && contexts.Count > 0 ? nowUtc : planDateUtc, finalEngineers, finalOrders);
 
         _jobStore.SetLastEngineers(request.Engineers);
         var job = _jobStore.Create();
@@ -263,24 +303,117 @@ public class OptimizationController : ControllerBase
     }
 
     /// <summary>
-    /// Расчет оперативного перепланирования
+    /// Оперативное перепланирование при поступлении аварийной заявки.
+    /// Система автоматически определяет текущее состояние каждого инженера по расписанию плана
+    /// (time-based inference): кто завершил работу, кто сейчас на объекте, кто свободен.
+    /// Никакого ручного ввода диспетчера не требуется.
     /// </summary>
-    [HttpPost("reschedule")]
+    [HttpPost("emergency")]
     [ProducesResponseType<JobStatusResponseDto>(StatusCodes.Status202Accepted)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    public async Task<ActionResult<JobStatusResponseDto>> Reschedule([FromBody] ReschedulePlanRequest request, CancellationToken ct = default)
+    public async Task<ActionResult<JobStatusResponseDto>> Emergency(
+        [FromBody] EmergencyOrderRequest request,
+        [FromServices] IGeocoder geocoder,
+        CancellationToken ct = default)
     {
-        var planRequest = await BuildPlanRequestAsync(request, ct);
-        if (planRequest == null)
+        var now = request.EventTime ?? DateTimeOffset.UtcNow;
+        var mskOffset = TimeSpan.FromHours(3);
+
+        // 1. Строим live-состояние каждого инженера по времени now
+        var liveResult = await _liveState.BuildAsync(now, ct);
+        var contexts = liveResult.Contexts;
+        var orphanedOrderIds = liveResult.OrphanedOrderIds;
+
+        // 2. Берём всех инженеров из БД, накладываем на них Live State (если есть)
+        var engEntities = await _engineers.GetAvailableEngineersAsync(ct: ct);
+        var baseEngineers = engEntities.Select(e => AlignEngineerShift(e, now, mskOffset)).ToList();
+            
+        List<EngineerInputDto> engineers = new List<EngineerInputDto>();
+        foreach (var baseEng in baseEngineers)
         {
-            return BadRequest("Перепланирование требует доступных инженеров и активных заявок.");
+            var ctx = contexts.FirstOrDefault(c => string.Equals(c.Engineer.ExternalId, baseEng.ExternalId, StringComparison.OrdinalIgnoreCase));
+            engineers.Add(ctx != null ? ctx.Engineer : baseEng);
         }
 
-        var job = _jobStore.Create();
-        _logger.LogInformation("Job {JobId}: перепланирование ({EventType}) на {EventTime}",
-            job.JobId, request.EventType, request.EventTime);
+        if (engineers.Count == 0)
+            return BadRequest("Нет доступных инженеров для перепланирования.");
 
-        RunJob(job.JobId, planRequest, request.EventType);
+      
+        var remainingOrders = await _liveState.BuildRemainingOrdersAsync(
+            contexts,
+            orphanedOrderIds,
+            targetDate: now.ToOffset(mskOffset).Date == DateTimeOffset.UtcNow.ToOffset(mskOffset).Date
+                ? null
+                : now,
+            excludeExternalId: null,
+            ct);
+
+        var urgentOrder = request.UrgentOrder;
+        
+        // Геокодируем ручную аварийную заявку, если координаты не переданы
+        if ((!urgentOrder.Latitude.HasValue || !urgentOrder.Longitude.HasValue) && !string.IsNullOrWhiteSpace(urgentOrder.Address))
+        {
+            var geo = await geocoder.GeocodeAsync(urgentOrder.Address, urgentOrder.District, ct);
+            if (geo != null)
+            {
+                urgentOrder = urgentOrder with
+                {
+                    Latitude = geo.Latitude,
+                    Longitude = geo.Longitude,
+                    Address = geo.DisplayName // обновляем адрес на отформатированный, если нужно
+                };
+            }
+            else
+            {
+                return BadRequest($"Не удалось определить координаты для адреса аварии: {urgentOrder.Address}");
+            }
+        }
+
+        urgentOrder = urgentOrder with
+        {
+            Priority = OrderPriority.Emergency,
+            Status = OrderStatus.NotDispatched
+        };
+
+        var newOrderEntity = new Backend.Contracts.Domain.Entities.WorkOrder
+        {
+            Id = Guid.NewGuid(),
+            ExternalId = urgentOrder.ExternalId,
+            District = urgentOrder.District ?? string.Empty,
+            Location = new Backend.Contracts.Domain.ValueObjects.Location
+            {
+                RawAddress = urgentOrder.Address ?? string.Empty,
+                Coordinates = new Backend.Contracts.Domain.ValueObjects.GeoCoordinate(urgentOrder.Latitude ?? 0, urgentOrder.Longitude ?? 0)
+            },
+            PreferredWindow = new Backend.Contracts.Domain.ValueObjects.TimeWindow(
+                urgentOrder.WindowStart ?? now,
+                urgentOrder.WindowEnd ?? now.AddHours(2)
+            ),
+            ServiceDuration = TimeSpan.FromMinutes(urgentOrder.DurationMinutes),
+            RequiredSkill = urgentOrder.RequiredSkill,
+            RequiredTransport = urgentOrder.RequiredTransport,
+            Priority = urgentOrder.Priority,
+            Status = urgentOrder.Status,
+            TaskType = urgentOrder.TaskType
+        };
+        
+        await _workOrders.AddAsync(newOrderEntity, ct);
+        urgentOrder = urgentOrder with { InternalId = newOrderEntity.Id };
+        
+        remainingOrders.Add(urgentOrder);
+
+        if (remainingOrders.Count == 0)
+            return BadRequest("Нет активных заявок для перепланирования.");
+
+        var planRequest = new CreateOptimizationPlanRequest(now, engineers, remainingOrders);
+        _jobStore.SetLastEngineers(engineers);
+
+        var job = _jobStore.Create();
+        _logger.LogInformation(
+            "Job {JobId}: аварийное перепланирование на {Now} (инженеров: {Engineers}, заявок: {Orders}, аварийная: {UrgentId})",
+            job.JobId, now, engineers.Count, remainingOrders.Count, request.UrgentOrder.ExternalId);
+
+        RunJob(job.JobId, planRequest, RescheduleEventType.NewUrgentOrder);
 
         return AcceptedAtAction(nameof(GetJobStatus), new { jobId = job.JobId }, job);
     }
@@ -483,59 +616,40 @@ public class OptimizationController : ControllerBase
         });
     }
 
-    private async Task<CreateOptimizationPlanRequest?> BuildPlanRequestAsync(ReschedulePlanRequest request, CancellationToken ct)
+    private static EngineerInputDto AlignEngineerShift(Engineer e, DateTimeOffset targetDateOrNow, TimeSpan mskOffset)
     {
-        var engineers = _jobStore.LastEngineers;
-        if (engineers is null || engineers.Count == 0)
+        var shiftMskStart = e.Shift.Start.ToOffset(mskOffset);
+        var shiftMskEnd = e.Shift.End.ToOffset(mskOffset);
+        var shiftDuration = shiftMskEnd - shiftMskStart;
+        if (shiftDuration <= TimeSpan.Zero) shiftDuration += TimeSpan.FromDays(1);
+
+        var targetMsk = targetDateOrNow.ToOffset(mskOffset);
+        var alignedStartMsk = new DateTimeOffset(
+            targetMsk.Year, targetMsk.Month, targetMsk.Day,
+            shiftMskStart.Hour, shiftMskStart.Minute, shiftMskStart.Second,
+            mskOffset);
+        var alignedEndMsk = alignedStartMsk + shiftDuration;
+        if (alignedEndMsk <= targetMsk) alignedEndMsk = targetMsk + shiftDuration;
+
+        var startUtc = alignedStartMsk.ToUniversalTime();
+        if (startUtc < targetDateOrNow)
         {
-            // Fallback на базу данных, если после перезапуска сервиса in-memory кэш пуст
-            var engEntities = await _engineers.GetAvailableEngineersAsync(ct: ct);
-            engineers = engEntities.Select(ToEngineerInputDto).ToList();
-            if (engineers.Count > 0)
-            {
-                _jobStore.SetLastEngineers(engineers);
-            }
+            startUtc = targetDateOrNow;
         }
 
-        if (engineers.Count == 0)
-        {
-            return null;
-        }
-
-        // Исключаем недоступного инженера и обновляем live-состояние остальных
-        var statesByEngineer = request.EngineersStates
-            .GroupBy(s => s.EngineerExternalId.Trim(), StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(g => g.Key, g => g.Last(), StringComparer.OrdinalIgnoreCase);
-
-        var updatedEngineers = engineers
-            .Where(e => string.IsNullOrWhiteSpace(request.UnavailableEngineerExternalId) ||
-                        !string.Equals(e.ExternalId.Trim(), request.UnavailableEngineerExternalId.Trim(), StringComparison.OrdinalIgnoreCase))
-            .Select(e => statesByEngineer.TryGetValue(e.ExternalId.Trim(), out var state)
-                ? e with
-                {
-                    StartLatitude = state.CurrentLatitude,
-                    StartLongitude = state.CurrentLongitude,
-                    ShiftStart = state.AvailableFromTime
-                }
-                : e)
-            .ToList();
-
-        // Оставшиеся заявки + новая срочная (если есть)
-        var orders = request.RemainingOrders
-            .Where(o => string.IsNullOrWhiteSpace(request.CancelledOrderExternalId) ||
-                        !string.Equals(o.ExternalId.Trim(), request.CancelledOrderExternalId.Trim(), StringComparison.OrdinalIgnoreCase))
-            .ToList();
-        if (request.NewUrgentOrder != null)
-        {
-            orders.Add(request.NewUrgentOrder);
-        }
-
-        if (updatedEngineers.Count == 0 || orders.Count == 0)
-        {
-            return null;
-        }
-
-        return new CreateOptimizationPlanRequest(request.EventTime, updatedEngineers, orders);
+        return new EngineerInputDto(
+            ExternalId: e.ExternalId,
+            Name: e.Name,
+            StartAddress: e.StartLocation.RawAddress,
+            StartLatitude: e.StartLocation.Coordinates.Latitude,
+            StartLongitude: e.StartLocation.Coordinates.Longitude,
+            ShiftStart: startUtc,
+            ShiftEnd: alignedEndMsk.ToUniversalTime(),
+            Transport: e.Transport,
+            Skills: [.. e.Skills],
+            MaxOrdersPerShift: e.MaxOrdersPerShift,
+            District: e.District,
+            DepotId: e.DepotId);
     }
 
     private static EngineerInputDto ToEngineerInputDto(Engineer e) => new(
@@ -623,75 +737,4 @@ public class OptimizationController : ControllerBase
             u.ReasonDescription
         )).ToList());
 
-    /// <summary>
-    /// Сэмпл-запрос для быстрой проверки распределения без БД.
-    /// </summary>
-    [HttpGet("sample-request")]
-    [ProducesResponseType<CreateOptimizationPlanRequest>(StatusCodes.Status200OK)]
-    public ActionResult<CreateOptimizationPlanRequest> GetSampleRequest()
-    {
-        var date = DateTimeOffset.UtcNow.Date.AddHours(9);
-        var engineers = new List<EngineerInputDto>
-        {
-            new(
-                ExternalId: "ENG-01",
-                Name: "Иван Смирнов",
-                StartAddress: "г. Москва, ул. Тверская, 7",
-                StartLatitude: 55.7576,
-                StartLongitude: 37.6111,
-                ShiftStart: date,
-                ShiftEnd: date.AddHours(9),
-                Transport: TransportType.Car,
-                Skills: [SkillType.Installation, SkillType.LocalRepair],
-                MaxOrdersPerShift: 10
-            ),
-            new(
-                ExternalId: "ENG-02",
-                Name: "Алексей Новиков",
-                StartAddress: "г. Москва, пр-т Мира, 40",
-                StartLatitude: 55.7820,
-                StartLongitude: 37.6334,
-                ShiftStart: date,
-                ShiftEnd: date.AddHours(9),
-                Transport: TransportType.PublicTransit,
-                Skills: [SkillType.LocalRepair, SkillType.Emergency],
-                MaxOrdersPerShift: 8
-            )
-        };
-
-        var orders = new List<WorkOrderInputDto>
-        {
-            new WorkOrderInputDto
-            {
-                ExternalId = "ORD-101",
-                Depot = new DepotDto("Диспетчерская", "г. Москва, ул. Тверская, 7", 55.7576, 37.6111),
-                Address = "г. Москва, ул. Арбат, 15",
-                Latitude = 55.7505,
-                Longitude = 37.5942,
-                WindowStart = date.AddHours(1),
-                WindowEnd = date.AddHours(3),
-                RequiredSkill = SkillType.Installation,
-                RequiredTransport = TransportType.Car,
-                Priority = OrderPriority.High,
-                TaskType = "Подключение клиента",
-                DurationMinutes = 70
-            },
-            new WorkOrderInputDto
-            {
-                ExternalId = "ORD-102",
-                Depot = new DepotDto("Диспетчерская", "г. Москва, ул. Тверская, 7", 55.7576, 37.6111),
-                Address = "г. Москва, ул. Сретенка, 24",
-                Latitude = 55.7698,
-                Longitude = 37.6331,
-                WindowStart = date.AddHours(2),
-                WindowEnd = date.AddHours(4),
-                RequiredSkill = SkillType.LocalRepair,
-                RequiredTransport = null,
-                Priority = OrderPriority.Normal,
-                TaskType = "Ремонт оборудования",
-                DurationMinutes = 30
-            }
-        };
-        return Ok(new CreateOptimizationPlanRequest(date, engineers, orders));
-    }
 }

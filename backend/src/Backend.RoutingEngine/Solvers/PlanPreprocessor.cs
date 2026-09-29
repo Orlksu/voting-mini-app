@@ -11,6 +11,15 @@ namespace Backend.RoutingEngine.Solvers;
 /// </summary>
 public static class PlanPreprocessor
 {
+    /// <summary>
+    /// Географический bbox Москвы (с запасом на МКАД + ближайшие города-спутники).
+    /// Координаты за пределами отклоняются как ошибки геокодера.
+    /// </summary>
+    private const double MoscowLatMin = 55.48;
+    private const double MoscowLatMax = 56.00;
+    private const double MoscowLonMin = 36.80;
+    private const double MoscowLonMax = 38.00;
+
     public sealed record Result(
         List<EngineerInputDto> Engineers,
         List<WorkOrderInputDto> Orders,
@@ -40,6 +49,18 @@ public static class PlanPreprocessor
             {
                 unassigned.Add(ToUnassigned(order, UnassignedReasonCode.MissingCoordinates,
                     "Заявка не содержит координат (широта/долгота)."));
+                continue;
+            }
+
+            // Географический bbox-фильтр: координаты за пределами Москвы — ошибка геокодера.
+            double lat = order.Latitude.Value;
+            double lon = order.Longitude.Value;
+            if (lat < MoscowLatMin || lat > MoscowLatMax || lon < MoscowLonMin || lon > MoscowLonMax)
+            {
+                unassigned.Add(ToUnassigned(order, UnassignedReasonCode.MissingCoordinates,
+                    $"Координаты заявки ({lat:F4}, {lon:F4}) находятся за пределами зоны обслуживания Москвы. " +
+                    $"Ожидается lat ∈ [{MoscowLatMin}, {MoscowLatMax}], lon ∈ [{MoscowLonMin}, {MoscowLonMax}]. " +
+                    "Вероятно, ошибка геокодера — уточните адрес."));
                 continue;
             }
 

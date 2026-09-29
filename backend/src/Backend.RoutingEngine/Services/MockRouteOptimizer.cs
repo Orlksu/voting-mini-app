@@ -100,27 +100,25 @@ public class MockRouteOptimizer : IRouteOptimizer
             double orderLat = order.Latitude!.Value;
             double orderLon = order.Longitude!.Value;
 
-            // 0. Фильтр по привязке к офису/району: заявка может быть назначена только инженеру своего офиса/района
-            var districtCandidates = engineerStates
+            // 0. Фильтр по привязке к офису/району (мягкий)
+            var sameDistrictCandidates = engineerStates
                 .Where(s => string.IsNullOrWhiteSpace(order.District)
                          || string.IsNullOrWhiteSpace(s.Engineer.District)
                          || string.Equals(s.Engineer.District.Trim(), order.District.Trim(), StringComparison.OrdinalIgnoreCase))
                 .ToList();
 
-            if (districtCandidates.Count == 0)
-            {
-                unassignedOrders.Add(new UnassignedOrderDto(
-                    order.ExternalId,
-                    order.Address,
-                    UnassignedReasonCode.NoQualifiedEngineer,
-                    $"В офисе/районе '{order.District}' нет доступных инженеров"));
-                continue;
-            }
-
-            // 1. Фильтр по квалификации (среди инженеров ТОЛЬКО этого офиса/района)
-            var skillCandidates = districtCandidates
+            // 1. Сначала ищем инженеров в том же районе с нужным скиллом
+            var skillCandidates = sameDistrictCandidates
                 .Where(s => s.Engineer.Skills.Contains(order.RequiredSkill))
                 .ToList();
+
+            // Если в родном районе нет нужных людей (или никого нет), снимаем жесткий фильтр района! (особенно для аварий)
+            if (skillCandidates.Count == 0)
+            {
+                skillCandidates = engineerStates
+                    .Where(s => s.Engineer.Skills.Contains(order.RequiredSkill))
+                    .ToList();
+            }
 
             if (skillCandidates.Count == 0)
             {
@@ -128,7 +126,7 @@ public class MockRouteOptimizer : IRouteOptimizer
                     order.ExternalId,
                     order.Address,
                     UnassignedReasonCode.NoQualifiedEngineer,
-                    $"В офисе '{order.District}' нет инженеров с квалификацией '{order.RequiredSkill}'"));
+                    $"В городе нет доступных инженеров с квалификацией '{order.RequiredSkill}'"));
                 continue;
             }
 

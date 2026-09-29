@@ -30,7 +30,8 @@ public static class NormativeDurations
         if (t.Contains("авар")) return EmergencyMinutes;
         if (t.Contains("подключ")) return InstallationMinutes;
         if (t.Contains("дозаказ")) return AdditionalEquipmentMinutes;
-        if (t.Contains("ремонт") || t.Contains("локальн")) return RepairMinutes;
+        // «Локальная заявка ТКД», «Ремонт ТКД», «Локальный ремонт ТПД» и аналоги
+        if (t.Contains("ремонт") || t.Contains("локальн") || t.Contains("ткд") || t.Contains("тпд")) return RepairMinutes;
         return null;
     }
 }

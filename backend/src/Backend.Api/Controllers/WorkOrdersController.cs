@@ -1,6 +1,9 @@
+using Backend.Api.Infrastructure.Repositories;
 using Backend.Api.Services;
 using Backend.Api.Services.Common;
 using Backend.Api.Services.WorkOrderService;
+using Backend.Contracts.Domain.Enums;
+using Backend.Contracts.Interfaces;
 using Backend.Contracts.Requests;
 using Backend.Contracts.Responses;
 using Microsoft.AspNetCore.Mvc;
@@ -10,9 +13,12 @@ namespace Backend.Api.Controllers;
 
 [ApiController]
 [Route("api/v1/workorders")]
+[Route("api/v1/work-orders")]
 public class WorkOrdersController(
     IWorkOrderService workOrderService,
     OrderImportJobStore jobStore,
+    OptimizationJobStore optimizationJobStore,
+    LivePlanStateBuilder liveState,
     IServiceScopeFactory scopeFactory,
     ILogger<WorkOrdersController> logger) : ControllerBase
 {
@@ -106,16 +112,18 @@ public class WorkOrdersController(
     /// <summary>
     /// Отмена заявки на обслуживание с указанием причины отмены.
     /// Завершенные (Completed) заявки отменить нельзя (400 Bad Request).
+    /// Если заявка была распределена (Dispatched), автоматически запускается перепланирование:
+    /// высвободившееся время инженера может быть заполнено заявкой из очереди NotDispatched.
     /// </summary>
     /// <param name="id">Уникальный идентификатор заявки (Guid или уникальный ExternalId).</param>
     /// <param name="district">Опциональный район (District) для однозначной идентификации при отмене по ExternalId.</param>
     /// <param name="request">Тело запроса с опциональной причиной отмены.</param>
     /// <param name="ct">Токен отмены запроса.</param>
-    /// <response code="200">Заявка успешно отменена.</response>
+    /// <response code="200">Заявка успешно отменена. Поле replanJobId содержит ID задачи перепланирования (если была запущена).</response>
     /// <response code="400">Ошибка валидации причины или попытка отменить завершенную заявку.</response>
     /// <response code="404">Заявка не найдена.</response>
     [HttpPost("{id}/cancel")]
-    [ProducesResponseType<WorkOrderDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<WorkOrderCancelResultDto>(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> Cancel(
@@ -126,8 +134,132 @@ public class WorkOrdersController(
     {
         try
         {
+            // Получаем текущий статус до отмены, чтобы решить нужно ли перепланирование
+            var orderBefore = await workOrderService.GetByIdentifierAsync(id, district, ct);
+            bool wasDispatched = orderBefore?.Status == OrderStatus.Dispatched;
+
             var result = await workOrderService.CancelAsync(id, district, request?.Reason, ct);
-            return Ok(result);
+
+            Guid? replanJobId = null;
+
+            // Автоматическое перепланирование: заявка была в маршруте инженера
+            if (wasDispatched && optimizationJobStore.LastResult != null)
+            {
+                try
+                {
+                    var now = DateTimeOffset.UtcNow;
+                    var liveResult = await liveState.BuildAsync(now, ct);
+                    var contexts = liveResult.Contexts;
+                    var orphaned = liveResult.OrphanedOrderIds;
+                    
+                    var engineers = contexts.Count > 0
+                        ? contexts.Select(c => c.Engineer).ToList()
+                        : optimizationJobStore.LastEngineers ?? [];
+
+                    if (engineers.Count == 0)
+                    {
+                        using var scope = scopeFactory.CreateScope();
+                        var engRepo = scope.ServiceProvider.GetRequiredService<IEngineerRepository>();
+                        var dbEngs = await engRepo.GetAvailableEngineersAsync(ct: ct);
+                        if (dbEngs.Count > 0)
+                        {
+                            var mskOffset = TimeSpan.FromHours(3);
+                            engineers = dbEngs.Select(e =>
+                            {
+                                var shiftMskStart = e.Shift.Start.ToOffset(mskOffset);
+                                var shiftMskEnd = e.Shift.End.ToOffset(mskOffset);
+                                var shiftDuration = shiftMskEnd - shiftMskStart;
+                                if (shiftDuration <= TimeSpan.Zero) shiftDuration += TimeSpan.FromDays(1);
+
+                                var nowMsk = now.ToOffset(mskOffset);
+                                var alignedStartMsk = new DateTimeOffset(
+                                    nowMsk.Year, nowMsk.Month, nowMsk.Day,
+                                    shiftMskStart.Hour, shiftMskStart.Minute, shiftMskStart.Second,
+                                    mskOffset);
+                                var alignedEndMsk = alignedStartMsk + shiftDuration;
+                                if (alignedEndMsk <= nowMsk) alignedEndMsk = nowMsk + shiftDuration;
+
+                                return new EngineerInputDto(
+                                    ExternalId: e.ExternalId,
+                                    Name: e.Name,
+                                    StartAddress: e.StartLocation.RawAddress,
+                                    StartLatitude: e.StartLocation.Coordinates.Latitude,
+                                    StartLongitude: e.StartLocation.Coordinates.Longitude,
+                                    ShiftStart: now,
+                                    ShiftEnd: alignedEndMsk.ToUniversalTime(),
+                                    Transport: e.Transport,
+                                    Skills: [.. e.Skills],
+                                    MaxOrdersPerShift: e.MaxOrdersPerShift,
+                                    District: e.District,
+                                    DepotId: e.DepotId);
+                            }).ToList();
+                        }
+                    }
+
+                    if (engineers.Count == 0)
+                    {
+                        logger.LogWarning(
+                            "Автоперепланирование после отмены заявки {OrderId} пропущено: нет доступных инженеров (в LiveState, LastEngineers и БД).",
+                            result.ExternalId);
+                    }
+                    else
+                    {
+                        // Собираем оставшиеся заявки, исключая отменённую
+                        var remainingOrders = await liveState.BuildRemainingOrdersAsync(
+                            contexts,
+                            orphaned,
+                            targetDate: null,
+                            excludeExternalId: result.ExternalId,
+                            ct);
+
+                        if (remainingOrders.Count == 0)
+                        {
+                            logger.LogInformation(
+                                "Автоперепланирование после отмены заявки {OrderId} пропущено: нет оставшихся заявок для перераспределения.",
+                                result.ExternalId);
+                        }
+                        else
+                        {
+                            var planRequest = new CreateOptimizationPlanRequest(now, engineers, remainingOrders);
+                            var job = optimizationJobStore.Create();
+                            replanJobId = job.JobId;
+
+                            logger.LogInformation(
+                                "Job {JobId}: перепланирование после отмены заявки {OrderId} (была Dispatched)",
+                                job.JobId, result.ExternalId);
+
+                            // Запускаем перепланирование в фоне через scoped-зависимости
+                            _ = Task.Run(async () =>
+                            {
+                                optimizationJobStore.MoveToProcessing(job.JobId);
+                                try
+                                {
+                                    using var scope = scopeFactory.CreateScope();
+                                    var scopedOptimizer = scope.ServiceProvider.GetRequiredService<IRouteOptimizer>();
+                                    var replanResult = await scopedOptimizer.OptimizeAsync(planRequest, CancellationToken.None);
+                                    optimizationJobStore.Complete(job.JobId, replanResult);
+
+                                    logger.LogInformation(
+                                        "Job {JobId}: перепланирование после отмены завершено ({Routes} маршрутов)",
+                                        job.JobId, replanResult.Routes.Count);
+                                }
+                                catch (Exception ex)
+                                {
+                                    logger.LogError(ex, "Job {JobId}: ошибка перепланирования после отмены", job.JobId);
+                                    optimizationJobStore.Fail(job.JobId, ex.Message);
+                                }
+                            });
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // Не даём ошибке перепланирования прервать успешную отмену заявки
+                    logger.LogWarning(ex, "Не удалось запустить автоперепланирование после отмены заявки {OrderId}", id);
+                }
+            }
+
+            return Ok(new WorkOrderCancelResultDto(result, replanJobId));
         }
         catch (KeyNotFoundException ex)
         {

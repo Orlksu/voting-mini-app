@@ -10,7 +10,7 @@ using Backend.Contracts.Responses;
 
 namespace Backend.Api.Services.EngineerService;
 
-public class EngineerService(IDepotRepository depots, IEngineerRepository engineers, IGeocoder geocoder, IEngineerCsvParser csvParser) : IEngineerService
+public class EngineerService(IDepotRepository depots, IEngineerRepository engineers, IGeocoder geocoder, IEngineerCsvParser csvParser, IWorkOrderRepository workOrders) : IEngineerService
 {
     public async Task<List<EngineerDto>> GetAllAsync(CancellationToken ct = default)
     {
@@ -240,10 +240,18 @@ public class EngineerService(IDepotRepository depots, IEngineerRepository engine
         return new EngineerImportResultDto(imported, skipped, unresolved, depotsCreated, warnings);
     }
 
-    public async Task<bool> DeleteEngineerAsync(string externalId, CancellationToken ct = default)
-        => await engineers.DeleteEngineerAsync(externalId, ct) > 0;
+    public async Task<bool> DeleteEngineerAsync(string externalId, DateTimeOffset? currentTime = null, CancellationToken ct = default)
+    {
+        var engineer = await engineers.GetByExternalIdAsync(externalId, ct);
+        if (engineer != null)
+        {
+            var now = currentTime ?? DateTimeOffset.UtcNow;
+            await workOrders.ResetOrphanedOrdersAsync(engineer.Id, now, ct);
+        }
+        return await engineers.DeleteEngineerAsync(externalId, ct) > 0;
+    }
 
-    public async Task<bool> DeleteEngineerByIdentifierAsync(string identifier, CancellationToken ct = default)
+    public async Task<bool> DeleteEngineerByIdentifierAsync(string identifier, DateTimeOffset? currentTime = null, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(identifier))
             return false;
@@ -254,11 +262,11 @@ public class EngineerService(IDepotRepository depots, IEngineerRepository engine
             var byId = await engineers.GetByIdAsync(guid, ct);
             if (byId != null)
             {
-                return await engineers.DeleteEngineerAsync(byId.ExternalId, ct) > 0;
+                return await DeleteEngineerAsync(byId.ExternalId, currentTime, ct);
             }
         }
 
-        return await engineers.DeleteEngineerAsync(trimmed, ct) > 0;
+        return await DeleteEngineerAsync(trimmed, currentTime, ct);
     }
 
     public async Task<EngineerDto?> GetEngineerByExternalIdAsync(string externalId, CancellationToken ct = default)
@@ -420,4 +428,14 @@ public class EngineerService(IDepotRepository depots, IEngineerRepository engine
         => int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var result) && result > 0
             ? result
             : 15;
+
+    public async Task UpdateAvailabilityAsync(Guid engineerId, bool isAvailable, DateTimeOffset? currentTime = null, CancellationToken ct = default)
+    {
+        await engineers.UpdateAvailabilityAsync(engineerId, isAvailable, ct);
+        if (!isAvailable)
+        {
+            var now = currentTime ?? DateTimeOffset.UtcNow;
+            await workOrders.ResetOrphanedOrdersAsync(engineerId, now, ct);
+        }
+    }
 }
