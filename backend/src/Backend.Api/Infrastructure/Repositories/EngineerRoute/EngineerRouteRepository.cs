@@ -21,9 +21,8 @@ public class EngineerRouteRepository(AppDbContext db) : IEngineerRouteRepository
             query = query.Where(x => x.OperationResult != null && x.OperationResult.PlanDate >= startUtc && x.OperationResult.PlanDate < endUtc);
         }
 
-        var ordered = query.OrderByDescending(x => x.OperationResult != null ? x.OperationResult.PlanDate : DateTimeOffset.MinValue)
-                           .ThenByDescending(x => x.OperationResult != null ? x.OperationResult.CreatedAt : x.Route.CreatedAt)
-                           .ThenByDescending(x => x.Route.CreatedAt)
+        var ordered = query.OrderByDescending(x => x.OperationResult != null ? x.OperationResult.CreatedAt : x.Route.CreatedAt)
+                           .ThenByDescending(x => x.OperationResult != null ? x.OperationResult.PlanDate : DateTimeOffset.MinValue)
                            .Select(x => x.Route);
 
         return await ordered.ToListAsync(ct);
