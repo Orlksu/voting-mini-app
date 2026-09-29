@@ -12,6 +12,7 @@ export type WorkOrder = {
   status: string
   taskType: string
   cancellationReason?: string | null
+  sequence?: number
 }
 
 export type WorkOrderCancelResult = {

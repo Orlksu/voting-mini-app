@@ -258,6 +258,7 @@ export default function Main() {
               latitude: stop.latitude,
               longitude: stop.longitude,
               priority: stop.priority,
+              sequence: stop.sequence,
             })),
         })
       })
@@ -510,6 +511,7 @@ export default function Main() {
           priority: stop.priority,
           status: stop.status ?? 'Assigned',
           taskType: stop.taskType,
+          sequence: stop.sequence,
         })) ?? [],
     [engineerRoute],
   )

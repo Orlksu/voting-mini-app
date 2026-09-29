@@ -1,5 +1,9 @@
 import { LngLatBounds, setWorkerUrl } from 'maplibre-gl'
-import type { ExpressionSpecification, GeoJSONSource } from 'maplibre-gl'
+import type {
+  ExpressionSpecification,
+  GeoJSONSource,
+  SymbolLayerSpecification,
+} from 'maplibre-gl'
 import type { FeatureCollection, LineString, Point } from 'geojson'
 import '@fontsource/material-symbols-rounded/400.css'
 import 'maplibre-gl/dist/maplibre-gl.css'
@@ -35,6 +39,14 @@ const EMERGENCY_COLOR = '#E5484D'
 const CLUSTER_FILL = '#1B1A1A'
 const CLUSTER_ZOOM_PADDING = { top: 160, bottom: 80, left: 80, right: 80 }
 const CLUSTER_ZOOM_MAX = 16
+
+const stopNumberLayout = {
+  'text-field': ['to-string', ['get', 'sequence']],
+  'text-font': CLUSTER_FONT,
+  'text-size': 12,
+  'text-allow-overlap': true,
+  'text-ignore-placement': true,
+} satisfies SymbolLayerSpecification['layout']
 
 const clusterRadius: ExpressionSpecification = [
   'step',
@@ -221,6 +233,7 @@ export function RoutingMap({
             externalId: stop.externalId,
             priority: stop.priority,
             color: route.color,
+            sequence: stop.sequence,
           },
           geometry: {
             type: 'Point',
@@ -381,6 +394,7 @@ export function RoutingMap({
         properties: {
           externalId: workOrder.externalId,
           priority: workOrder.priority,
+          sequence: workOrder.sequence ?? null,
         },
         geometry: {
           type: 'Point',
@@ -472,16 +486,31 @@ export function RoutingMap({
                 id={ROUTE_POINTS_LAYER_ID}
                 type="circle"
                 paint={{
-                  'circle-radius': 10,
+                  'circle-radius': 12,
                   'circle-color': [
                     'match',
                     ['get', 'priority'],
                     'Emergency',
-                    '#B00F19',
-                    '#EABE5F',
+                    EMERGENCY_COLOR,
+                    CLUSTER_COLOR,
                   ],
-                  'circle-stroke-color': '#000000',
+                  'circle-stroke-color': CLUSTER_FILL,
                   'circle-stroke-width': 2,
+                }}
+              />
+              <Layer
+                id="engineer-route-numbers"
+                type="symbol"
+                filter={['has', 'sequence']}
+                layout={stopNumberLayout}
+                paint={{
+                  'text-color': [
+                    'match',
+                    ['get', 'priority'],
+                    'Emergency',
+                    '#FFFFFF',
+                    CLUSTER_FILL,
+                  ],
                 }}
               />
             </Source>
@@ -637,6 +666,13 @@ export function RoutingMap({
                     2,
                   ],
                 }}
+              />
+              <Layer
+                id="office-route-numbers"
+                type="symbol"
+                minzoom={12}
+                layout={{ ...stopNumberLayout, 'text-size': 11 }}
+                paint={{ 'text-color': CLUSTER_FILL }}
               />
             </Source>
           </>

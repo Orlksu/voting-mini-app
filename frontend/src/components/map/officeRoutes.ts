@@ -19,5 +19,6 @@ export type OfficeRoute = {
     latitude: number
     longitude: number
     priority: string
+    sequence: number
   }[]
 }
