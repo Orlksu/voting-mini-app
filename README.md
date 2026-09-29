@@ -25,6 +25,17 @@
 ```bash
 git clone <URL этого репозитория> case-13
 cd case-13
+./start.sh
+```
+
+`start.sh` проверит Docker и свободные порты, создаст `.env` из `.env.example`,
+соберёт и запустит все контейнеры, дождётся готовности сервисов и напечатает
+адреса. Скрипт ничего не удаляет, его можно запускать повторно. На Windows —
+из WSL или Git Bash.
+
+То же самое вручную:
+
+```bash
 cp .env.example .env
 docker compose up -d --build
 ```
@@ -252,6 +263,7 @@ dotnet build backend/src/Backend.Api/Backend.Api.csproj --configuration Release
 │   ├── src/Backend.RoutingEngine/  # VRPTW на OR-Tools, клиент Valhalla
 │   ├── src/Backend.Contracts/   # DTO, доменные модели
 │   └── tests/SolverSmoke/       # smoke-тест солвера
+├── start.sh                     # запуск всего проекта одной командой
 ├── scripts/prepare-valhalla-region.sh  # граф Москвы с областью
 ├── docs/valhalla.md             # эксплуатация Valhalla
 ├── FRONTEND_API.md              # описание API для frontend
