@@ -1,3 +1,4 @@
+using Backend.Api.Infrastructure.Repositories;
 using Backend.Api.Services;
 using Backend.Api.Services.Common;
 using Backend.Api.Services.WorkOrderService;
@@ -155,7 +156,53 @@ public class WorkOrdersController(
                         ? contexts.Select(c => c.Engineer).ToList()
                         : optimizationJobStore.LastEngineers ?? [];
 
-                    if (engineers.Count > 0)
+                    if (engineers.Count == 0)
+                    {
+                        using var scope = scopeFactory.CreateScope();
+                        var engRepo = scope.ServiceProvider.GetRequiredService<IEngineerRepository>();
+                        var dbEngs = await engRepo.GetAvailableEngineersAsync(ct: ct);
+                        if (dbEngs.Count > 0)
+                        {
+                            var mskOffset = TimeSpan.FromHours(3);
+                            engineers = dbEngs.Select(e =>
+                            {
+                                var shiftMskStart = e.Shift.Start.ToOffset(mskOffset);
+                                var shiftMskEnd = e.Shift.End.ToOffset(mskOffset);
+                                var shiftDuration = shiftMskEnd - shiftMskStart;
+                                if (shiftDuration <= TimeSpan.Zero) shiftDuration += TimeSpan.FromDays(1);
+
+                                var nowMsk = now.ToOffset(mskOffset);
+                                var alignedStartMsk = new DateTimeOffset(
+                                    nowMsk.Year, nowMsk.Month, nowMsk.Day,
+                                    shiftMskStart.Hour, shiftMskStart.Minute, shiftMskStart.Second,
+                                    mskOffset);
+                                var alignedEndMsk = alignedStartMsk + shiftDuration;
+                                if (alignedEndMsk <= nowMsk) alignedEndMsk = nowMsk + shiftDuration;
+
+                                return new EngineerInputDto(
+                                    ExternalId: e.ExternalId,
+                                    Name: e.Name,
+                                    StartAddress: e.StartLocation.RawAddress,
+                                    StartLatitude: e.StartLocation.Coordinates.Latitude,
+                                    StartLongitude: e.StartLocation.Coordinates.Longitude,
+                                    ShiftStart: now,
+                                    ShiftEnd: alignedEndMsk.ToUniversalTime(),
+                                    Transport: e.Transport,
+                                    Skills: [.. e.Skills],
+                                    MaxOrdersPerShift: e.MaxOrdersPerShift,
+                                    District: e.District,
+                                    DepotId: e.DepotId);
+                            }).ToList();
+                        }
+                    }
+
+                    if (engineers.Count == 0)
+                    {
+                        logger.LogWarning(
+                            "Автоперепланирование после отмены заявки {OrderId} пропущено: нет доступных инженеров (в LiveState, LastEngineers и БД).",
+                            result.ExternalId);
+                    }
+                    else
                     {
                         // Собираем оставшиеся заявки, исключая отменённую
                         var remainingOrders = await liveState.BuildRemainingOrdersAsync(
@@ -165,7 +212,13 @@ public class WorkOrdersController(
                             excludeExternalId: result.ExternalId,
                             ct);
 
-                        if (remainingOrders.Count > 0)
+                        if (remainingOrders.Count == 0)
+                        {
+                            logger.LogInformation(
+                                "Автоперепланирование после отмены заявки {OrderId} пропущено: нет оставшихся заявок для перераспределения.",
+                                result.ExternalId);
+                        }
+                        else
                         {
                             var planRequest = new CreateOptimizationPlanRequest(now, engineers, remainingOrders);
                             var job = optimizationJobStore.Create();

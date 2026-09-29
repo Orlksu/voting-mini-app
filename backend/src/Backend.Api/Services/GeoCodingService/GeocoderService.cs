@@ -19,25 +19,35 @@ public class GeocoderService(HttpClient httpClient, IGeocodeCacheRepository cach
         ("Талалихина, д. 16",  55.7355, 37.6768, "Таганский"),
     ];
 
+    private static bool TryGetManualOverride(string address, out GeocoderResultDto? result)
+    {
+        foreach (var (needle, lat, lon, _) in ManualOverrides)
+        {
+            if (address.Contains(needle, StringComparison.OrdinalIgnoreCase))
+            {
+                result = new GeocoderResultDto
+                {
+                    LatString = lat.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    LonString = lon.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    DisplayName = address
+                };
+                return true;
+            }
+        }
+
+        result = null;
+        return false;
+    }
+
     public async Task<GeocoderResultDto?> GeocodeAsync(string address, string? district = null, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(address))
             return null;
 
 
-        foreach (var (needle, lat, lon, overrideDistrict) in ManualOverrides)
+        if (TryGetManualOverride(address, out var manualResult))
         {
-            if (address.Contains(needle, StringComparison.OrdinalIgnoreCase))
-            {
-                
-                return new GeocoderResultDto
-                {
-                    LatString = lat.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                    LonString = lon.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                    DisplayName = address
-                };
-               
-            }
+            return manualResult;
         }
 
         var rawQuery = QueryKey(address, district);
@@ -101,22 +111,14 @@ public class GeocoderService(HttpClient httpClient, IGeocodeCacheRepository cach
         foreach (var item in distinctItems)
         {
             var key = QueryKey(item.Address, item.District);
-            bool overridden = false;
-            foreach (var (needle, lat, lon, overrideDistrict) in ManualOverrides)
+            if (TryGetManualOverride(item.Address, out var manualResult))
             {
-                if (item.Address.Contains(needle, StringComparison.OrdinalIgnoreCase))
-                {
-                    result[key] = new GeocoderResultDto
-                    {
-                        LatString = lat.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                        LonString = lon.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                        DisplayName = item.Address
-                    };
-                    overridden = true;
-                    break;
-                }
+                result[key] = manualResult;
             }
-            if (!overridden) toProcess.Add(item);
+            else
+            {
+                toProcess.Add(item);
+            }
         }
 
         var queryKeys = toProcess
