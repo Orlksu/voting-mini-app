@@ -62,6 +62,9 @@ services:
       # Две выгрузки через пробел сюда не ставить: из-за дублей на границе
       # сборка зависает на этапе complex turn restrictions.
       - tile_urls=https://download.bbbike.org/osm/bbbike/Moscow/Moscow.osm.pbf
+      # Потоки сборки и сервиса. Без ограничения берутся все ядра, и пик памяти
+      # при сборке графа Москвы с областью растёт; 4 потока — ~3 ГБ.
+      - server_threads=${VALHALLA_SERVER_THREADS:-4}
       - build_elevation=False
       - build_admins=False
       - build_time_zones=False
