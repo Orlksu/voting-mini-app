@@ -302,29 +302,6 @@ public class OptimizationController : ControllerBase
     }
 
     /// <summary>
-    /// Расчет оперативного перепланирования
-    /// </summary>
-    [HttpPost("reschedule")]
-    [ProducesResponseType<JobStatusResponseDto>(StatusCodes.Status202Accepted)]
-    [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    public async Task<ActionResult<JobStatusResponseDto>> Reschedule([FromBody] ReschedulePlanRequest request, CancellationToken ct = default)
-    {
-        var planRequest = await BuildPlanRequestAsync(request, ct);
-        if (planRequest == null)
-        {
-            return BadRequest("Перепланирование требует доступных инженеров и активных заявок.");
-        }
-
-        var job = _jobStore.Create();
-        _logger.LogInformation("Job {JobId}: перепланирование ({EventType}) на {EventTime}",
-            job.JobId, request.EventType, request.EventTime);
-
-        RunJob(job.JobId, planRequest, request.EventType);
-
-        return AcceptedAtAction(nameof(GetJobStatus), new { jobId = job.JobId }, job);
-    }
-
-    /// <summary>
     /// Оперативное перепланирование при поступлении аварийной заявки.
     /// Система автоматически определяет текущее состояние каждого инженера по расписанию плана
     /// (time-based inference): кто завершил работу, кто сейчас на объекте, кто свободен.
@@ -650,61 +627,6 @@ public class OptimizationController : ControllerBase
         });
     }
 
-    private async Task<CreateOptimizationPlanRequest?> BuildPlanRequestAsync(ReschedulePlanRequest request, CancellationToken ct)
-    {
-        var engineers = _jobStore.LastEngineers;
-        if (engineers is null || engineers.Count == 0)
-        {
-            // Fallback на базу данных, если после перезапуска сервиса in-memory кэш пуст
-            var engEntities = await _engineers.GetAvailableEngineersAsync(ct: ct);
-            engineers = engEntities.Select(ToEngineerInputDto).ToList();
-            if (engineers.Count > 0)
-            {
-                _jobStore.SetLastEngineers(engineers);
-            }
-        }
-
-        if (engineers.Count == 0)
-        {
-            return null;
-        }
-
-        // Исключаем недоступного инженера и обновляем live-состояние остальных
-        var statesByEngineer = request.EngineersStates
-            .GroupBy(s => s.EngineerExternalId.Trim(), StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(g => g.Key, g => g.Last(), StringComparer.OrdinalIgnoreCase);
-
-        var updatedEngineers = engineers
-            .Where(e => string.IsNullOrWhiteSpace(request.UnavailableEngineerExternalId) ||
-                        !string.Equals(e.ExternalId.Trim(), request.UnavailableEngineerExternalId.Trim(), StringComparison.OrdinalIgnoreCase))
-            .Select(e => statesByEngineer.TryGetValue(e.ExternalId.Trim(), out var state)
-                ? e with
-                {
-                    StartLatitude = state.CurrentLatitude,
-                    StartLongitude = state.CurrentLongitude,
-                    ShiftStart = state.AvailableFromTime
-                }
-                : e)
-            .ToList();
-
-        // Оставшиеся заявки + новая срочная (если есть)
-        var orders = request.RemainingOrders
-            .Where(o => string.IsNullOrWhiteSpace(request.CancelledOrderExternalId) ||
-                        !string.Equals(o.ExternalId.Trim(), request.CancelledOrderExternalId.Trim(), StringComparison.OrdinalIgnoreCase))
-            .ToList();
-        if (request.NewUrgentOrder != null)
-        {
-            orders.Add(request.NewUrgentOrder);
-        }
-
-        if (updatedEngineers.Count == 0 || orders.Count == 0)
-        {
-            return null;
-        }
-
-        return new CreateOptimizationPlanRequest(request.EventTime, updatedEngineers, orders);
-    }
-
     private static EngineerInputDto ToEngineerInputDto(Engineer e) => new(
         ExternalId: e.ExternalId,
         Name: e.Name,
@@ -790,75 +712,4 @@ public class OptimizationController : ControllerBase
             u.ReasonDescription
         )).ToList());
 
-    /// <summary>
-    /// Сэмпл-запрос для быстрой проверки распределения без БД.
-    /// </summary>
-    [HttpGet("sample-request")]
-    [ProducesResponseType<CreateOptimizationPlanRequest>(StatusCodes.Status200OK)]
-    public ActionResult<CreateOptimizationPlanRequest> GetSampleRequest()
-    {
-        var date = DateTimeOffset.UtcNow.Date.AddHours(9);
-        var engineers = new List<EngineerInputDto>
-        {
-            new(
-                ExternalId: "ENG-01",
-                Name: "Иван Смирнов",
-                StartAddress: "г. Москва, ул. Тверская, 7",
-                StartLatitude: 55.7576,
-                StartLongitude: 37.6111,
-                ShiftStart: date,
-                ShiftEnd: date.AddHours(9),
-                Transport: TransportType.Car,
-                Skills: [SkillType.Installation, SkillType.LocalRepair],
-                MaxOrdersPerShift: 10
-            ),
-            new(
-                ExternalId: "ENG-02",
-                Name: "Алексей Новиков",
-                StartAddress: "г. Москва, пр-т Мира, 40",
-                StartLatitude: 55.7820,
-                StartLongitude: 37.6334,
-                ShiftStart: date,
-                ShiftEnd: date.AddHours(9),
-                Transport: TransportType.PublicTransit,
-                Skills: [SkillType.LocalRepair, SkillType.Emergency],
-                MaxOrdersPerShift: 8
-            )
-        };
-
-        var orders = new List<WorkOrderInputDto>
-        {
-            new WorkOrderInputDto
-            {
-                ExternalId = "ORD-101",
-                Depot = new DepotDto("Диспетчерская", "г. Москва, ул. Тверская, 7", 55.7576, 37.6111),
-                Address = "г. Москва, ул. Арбат, 15",
-                Latitude = 55.7505,
-                Longitude = 37.5942,
-                WindowStart = date.AddHours(1),
-                WindowEnd = date.AddHours(3),
-                RequiredSkill = SkillType.Installation,
-                RequiredTransport = TransportType.Car,
-                Priority = OrderPriority.High,
-                TaskType = "Подключение клиента",
-                DurationMinutes = 70
-            },
-            new WorkOrderInputDto
-            {
-                ExternalId = "ORD-102",
-                Depot = new DepotDto("Диспетчерская", "г. Москва, ул. Тверская, 7", 55.7576, 37.6111),
-                Address = "г. Москва, ул. Сретенка, 24",
-                Latitude = 55.7698,
-                Longitude = 37.6331,
-                WindowStart = date.AddHours(2),
-                WindowEnd = date.AddHours(4),
-                RequiredSkill = SkillType.LocalRepair,
-                RequiredTransport = null,
-                Priority = OrderPriority.Normal,
-                TaskType = "Ремонт оборудования",
-                DurationMinutes = 30
-            }
-        };
-        return Ok(new CreateOptimizationPlanRequest(date, engineers, orders));
-    }
 }
