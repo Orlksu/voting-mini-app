@@ -110,6 +110,8 @@ interface RoutingMapProps {
   selectedOrderEngineerName?: string | null
   isSelectedOrderEngineerLoading?: boolean
   onOrderSelect?: (externalId: string | null) => void
+  onOrderComplete?: (order: WorkOrder) => Promise<unknown>
+  onOrderCancel?: (order: WorkOrder, reason: string) => Promise<unknown>
 }
 
 function decodePolyline(
@@ -162,6 +164,8 @@ export function RoutingMap({
   selectedOrderEngineerName = null,
   isSelectedOrderEngineerLoading = false,
   onOrderSelect,
+  onOrderComplete,
+  onOrderCancel,
 }: RoutingMapProps) {
   const [zoom, setZoom] = useState(11)
   const [isFeatureHovered, setIsFeatureHovered] = useState(false)
@@ -505,6 +509,12 @@ export function RoutingMap({
             engineerName={selectedOrderEngineerName}
             isEngineerLoading={isSelectedOrderEngineerLoading}
             onClose={() => onOrderSelect?.(null)}
+            onComplete={(order) =>
+              onOrderComplete ? onOrderComplete(order) : Promise.resolve()
+            }
+            onCancel={(order, reason) =>
+              onOrderCancel ? onOrderCancel(order, reason) : Promise.resolve()
+            }
           />
         )}
         <Layer

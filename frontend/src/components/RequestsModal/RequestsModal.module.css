@@ -51,11 +51,15 @@
     transition: background 0.2s ease-in-out;
     padding: 15px 10px;
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     border-bottom: 3px solid rgb(234, 190, 95, 0.2);
     gap: 10px;
 
     .info {
+      flex: 1 1 0;
+      min-width: 0;
+
       p {
         font-size: 25px;
       }
@@ -71,6 +75,15 @@
 
     &:last-child {
       border-bottom: none;
+    }
+
+    &.requestTerminal {
+      cursor: default;
+      opacity: 0.55;
+    }
+
+    &.requestTerminal:hover {
+      background: transparent;
     }
 
     .circle {

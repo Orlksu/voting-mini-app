@@ -84,6 +84,7 @@ export default function Main() {
   const [orders, setOrders] = useState<WorkOrder[]>([])
   const [activeEngineerId, setActiveEngineerId] = useState<string | null>(null)
   const [engineerRoute, setEngineerRoute] = useState<EngineerRoute | null>(null)
+  const [routeReloadKey, setRouteReloadKey] = useState(0)
   const [routeErrorEngineerId, setRouteErrorEngineerId] = useState<
     string | null
   >(null)
@@ -174,7 +175,7 @@ export default function Main() {
     return () => {
       controller.abort()
     }
-  }, [activeEngineerId])
+  }, [activeEngineerId, routeReloadKey])
 
   const reloadOrders = useCallback(async () => {
     orderEngineerIndexRef.current = null
@@ -241,6 +242,38 @@ export default function Main() {
   ) => {
     if (isAllUploaded) setIsAddBrigadesOpen(false)
     addImportJobs(uploads, 'engineers')
+  }
+
+  const refreshAfterOrderAction = async () => {
+    setSelectedOrderId(null)
+    orderEngineerIndexRef.current = null
+    if (activeEngineerId) setRouteReloadKey((key) => key + 1)
+    try {
+      await reloadOrders()
+    } catch {
+      // действие уже выполнено на сервере, список обновится при следующей загрузке
+    }
+  }
+
+  const handleOrderComplete = async (order: WorkOrder) => {
+    const updated = await orderApi.complete(order.id)
+    await refreshAfterOrderAction()
+    return updated
+  }
+
+  const handleOrderCancel = async (order: WorkOrder, reason: string) => {
+    const result = await orderApi.cancel(order.id, reason || undefined)
+    const replanJobId = result.replanJobId
+    if (replanJobId) {
+      setOptimizationResult(null)
+      setOptimizationError(null)
+      setProgressJobs((jobs) => [
+        ...jobs.filter((job) => job.type !== 'optimization'),
+        { type: 'optimization', jobId: replanJobId, mode: 'replan' },
+      ])
+    }
+    await refreshAfterOrderAction()
+    return result.order
   }
 
   const startOptimization = async (mode: OptimizationMode = 'optimize') => {
@@ -452,6 +485,8 @@ export default function Main() {
           selectedOrderEngineerName={selectedOrderEngineerName}
           isSelectedOrderEngineerLoading={isResolvingOrderEngineer}
           onOrderSelect={handleOrderSelect}
+          onOrderComplete={handleOrderComplete}
+          onOrderCancel={handleOrderCancel}
         />
       </div>
 
@@ -491,6 +526,8 @@ export default function Main() {
           setActivePanel(null)
           void handleOrderSelect(externalId)
         }}
+        onComplete={handleOrderComplete}
+        onCancel={handleOrderCancel}
       />
 
       <UploadCsvModal
