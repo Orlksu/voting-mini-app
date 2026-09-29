@@ -108,37 +108,25 @@ public sealed class LivePlanStateBuilder(
         string? excludeExternalId,
         CancellationToken ct)
     {
-        // Pending-остановки из текущего плана
-        var pendingFromPlan = contexts
+        var allPendingDb = await workOrderRepo
+            .GetPendingOrdersForPlanningAsync(targetDate: targetDate, status: null, ct: ct);
+
+        var pendingExtIds = contexts
             .SelectMany(c => c.PendingStops)
-            .Select(s => new WorkOrderInputDto
-            {
-                ExternalId = s.ExternalOrderId,
-                Address = s.Address,
-                Latitude = s.Latitude,
-                Longitude = s.Longitude,
-                Priority = s.Priority,
-                TaskType = s.TaskType,
-                Status = OrderStatus.Dispatched
-            })
-            .ToList();
-
-        // NotDispatched из БД — заявки, которые не вошли в прошлый план
-        var notDispatched = await workOrderRepo
-            .GetPendingOrdersForPlanningAsync(targetDate: targetDate, status: OrderStatus.NotDispatched, ct: ct);
-
-        var pendingExtIds = pendingFromPlan
-            .Select(o => o.ExternalId.Trim())
+            .Select(s => s.ExternalOrderId.Trim())
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-        var fromDb = notDispatched
-            .Where(o => !pendingExtIds.Contains(o.ExternalId.Trim()))
-            .Select(ToWorkOrderInputDto)
-            .ToList();
+        var all = new List<WorkOrderInputDto>();
 
-        var all = pendingFromPlan.Concat(fromDb).ToList();
+        foreach (var dbOrder in allPendingDb)
+        {
+            var extId = dbOrder.ExternalId.Trim();
+            if (dbOrder.Status == OrderStatus.NotDispatched || pendingExtIds.Contains(extId))
+            {
+                all.Add(ToWorkOrderInputDto(dbOrder));
+            }
+        }
 
-        // Исключаем отменённую заявку, если задана
         if (!string.IsNullOrWhiteSpace(excludeExternalId))
         {
             all = all

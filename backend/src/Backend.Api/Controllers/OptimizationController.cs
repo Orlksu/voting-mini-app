@@ -186,14 +186,18 @@ public class OptimizationController : ControllerBase
         if (isToday && contexts.Count > 0)
         {
             _logger.LogInformation("Replan: используется Live State (от {Now})", nowUtc);
-            var allEngineers = contexts.Select(c => c.Engineer).ToList();
+            
+            var dbEngs = await _engineers.GetAvailableEngineersAsync(depotId, district, ct);
+            var baseEngineers = dbEngs.Select(ToEngineerInputDto).ToList();
+            var allEngineers = new List<EngineerInputDto>();
+            
+            foreach (var baseEng in baseEngineers)
+            {
+                var ctx = contexts.FirstOrDefault(c => string.Equals(c.Engineer.ExternalId, baseEng.ExternalId, StringComparison.OrdinalIgnoreCase));
+                allEngineers.Add(ctx != null ? ctx.Engineer : baseEng);
+            }
+            
             var allRemaining = await _liveState.BuildRemainingOrdersAsync(contexts, targetDate, null, ct);
-
-            // Применяем фильтры UI (если переданы)
-            if (depotId.HasValue) 
-                allEngineers = allEngineers.Where(e => e.DepotId == depotId.Value).ToList();
-            if (!string.IsNullOrEmpty(district)) 
-                allEngineers = allEngineers.Where(e => string.Equals(e.District, district, StringComparison.OrdinalIgnoreCase)).ToList();
 
             finalEngineers = allEngineers;
             finalOrders = allRemaining; // Оптимизатор сам разберется с District Penalty
@@ -331,34 +335,33 @@ public class OptimizationController : ControllerBase
         // 1. Строим live-состояние каждого инженера по времени now
         var contexts = await _liveState.BuildAsync(now, ct);
 
-        // 2. Если нет данных предыдущего плана — берём инженеров из БД напрямую
-        List<EngineerInputDto> engineers;
-        if (contexts.Count == 0)
+        // 2. Берём всех инженеров из БД, накладываем на них Live State (если есть)
+        var engEntities = await _engineers.GetAvailableEngineersAsync(ct: ct);
+        var baseEngineers = engEntities.Select(e => new EngineerInputDto(
+            ExternalId: e.ExternalId,
+            Name: e.Name,
+            StartAddress: e.StartLocation.RawAddress,
+            StartLatitude: e.StartLocation.Coordinates.Latitude,
+            StartLongitude: e.StartLocation.Coordinates.Longitude,
+            ShiftStart: now,
+            ShiftEnd: e.Shift.End,
+            Transport: e.Transport,
+            Skills: [.. e.Skills],
+            MaxOrdersPerShift: e.MaxOrdersPerShift,
+            District: e.District,
+            DepotId: e.DepotId)).ToList();
+            
+        List<EngineerInputDto> engineers = new List<EngineerInputDto>();
+        foreach (var baseEng in baseEngineers)
         {
-            var engEntities = await _engineers.GetAvailableEngineersAsync(ct: ct);
-            engineers = engEntities.Select(e => new EngineerInputDto(
-                ExternalId: e.ExternalId,
-                Name: e.Name,
-                StartAddress: e.StartLocation.RawAddress,
-                StartLatitude: e.StartLocation.Coordinates.Latitude,
-                StartLongitude: e.StartLocation.Coordinates.Longitude,
-                ShiftStart: now,
-                ShiftEnd: e.Shift.End,
-                Transport: e.Transport,
-                Skills: [.. e.Skills],
-                MaxOrdersPerShift: e.MaxOrdersPerShift,
-                District: e.District,
-                DepotId: e.DepotId)).ToList();
-        }
-        else
-        {
-            engineers = contexts.Select(c => c.Engineer).ToList();
+            var ctx = contexts.FirstOrDefault(c => string.Equals(c.Engineer.ExternalId, baseEng.ExternalId, StringComparison.OrdinalIgnoreCase));
+            engineers.Add(ctx != null ? ctx.Engineer : baseEng);
         }
 
         if (engineers.Count == 0)
             return BadRequest("Нет доступных инженеров для перепланирования.");
 
-        // 3. Собираем оставшиеся заявки (Pending из плана + NotDispatched из БД) + новая аварийная
+      
         var remainingOrders = await _liveState.BuildRemainingOrdersAsync(
             contexts,
             targetDate: now.ToOffset(mskOffset).Date == DateTimeOffset.UtcNow.ToOffset(mskOffset).Date
@@ -367,11 +370,60 @@ public class OptimizationController : ControllerBase
             excludeExternalId: null,
             ct);
 
-        remainingOrders.Add(request.UrgentOrder with
+        var urgentOrder = request.UrgentOrder;
+        
+        // Геокодируем ручную аварийную заявку, если координаты не переданы
+        if ((!urgentOrder.Latitude.HasValue || !urgentOrder.Longitude.HasValue) && !string.IsNullOrWhiteSpace(urgentOrder.Address))
+        {
+            var geocoder = HttpContext.RequestServices.GetRequiredService<Backend.Api.Services.GeoCodingService.IGeocoder>();
+            var geo = await geocoder.GeocodeAsync(urgentOrder.Address, urgentOrder.District, ct);
+            if (geo != null)
+            {
+                urgentOrder = urgentOrder with
+                {
+                    Latitude = geo.Latitude,
+                    Longitude = geo.Longitude,
+                    Address = geo.DisplayName // обновляем адрес на отформатированный, если нужно
+                };
+            }
+            else
+            {
+                return BadRequest($"Не удалось определить координаты для адреса аварии: {urgentOrder.Address}");
+            }
+        }
+
+        urgentOrder = urgentOrder with
         {
             Priority = OrderPriority.Emergency,
             Status = OrderStatus.NotDispatched
-        });
+        };
+
+        var newOrderEntity = new Backend.Contracts.Domain.Entities.WorkOrder
+        {
+            Id = Guid.NewGuid(),
+            ExternalId = urgentOrder.ExternalId,
+            District = urgentOrder.District ?? string.Empty,
+            Location = new Backend.Contracts.Domain.ValueObjects.Location
+            {
+                RawAddress = urgentOrder.Address ?? string.Empty,
+                Coordinates = new Backend.Contracts.Domain.ValueObjects.GeoCoordinate(urgentOrder.Latitude ?? 0, urgentOrder.Longitude ?? 0)
+            },
+            PreferredWindow = new Backend.Contracts.Domain.ValueObjects.TimeWindow(
+                urgentOrder.WindowStart ?? now,
+                urgentOrder.WindowEnd ?? now.AddHours(2)
+            ),
+            ServiceDuration = TimeSpan.FromMinutes(urgentOrder.DurationMinutes),
+            RequiredSkill = urgentOrder.RequiredSkill,
+            RequiredTransport = urgentOrder.RequiredTransport,
+            Priority = urgentOrder.Priority,
+            Status = urgentOrder.Status,
+            TaskType = urgentOrder.TaskType
+        };
+        
+        await _workOrders.AddAsync(newOrderEntity, ct);
+        urgentOrder = urgentOrder with { InternalId = newOrderEntity.Id };
+        
+        remainingOrders.Add(urgentOrder);
 
         if (remainingOrders.Count == 0)
             return BadRequest("Нет активных заявок для перепланирования.");

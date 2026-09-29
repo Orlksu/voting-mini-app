@@ -136,11 +136,16 @@ public class RouteOptimizer : IRouteOptimizer
                     _ => "auto"
                 };
 
-                string? geoJson = await _valhalla.GetRouteGeoJsonAsync(locations, costing, cancellationToken);
-                if (string.IsNullOrWhiteSpace(geoJson) && costing == "transit")
+                string? geoJson = null;
+                if (costing == "transit") 
                 {
-                    // Без GTFS транзит-полилинию Valhalla не отдаёт (400) — берём auto-прокси
+                    // Без GTFS транзит-полилинию Valhalla не отдаёт, поэтому для отрисовки 
+                    // линий общественного транспорта на карте сразу берем автомобильные дороги (auto)
                     geoJson = await _valhalla.GetRouteGeoJsonAsync(locations, "auto", cancellationToken);
+                }
+                else
+                {
+                    geoJson = await _valhalla.GetRouteGeoJsonAsync(locations, costing, cancellationToken);
                 }
 
                 if (!string.IsNullOrWhiteSpace(geoJson))
