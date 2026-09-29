@@ -196,7 +196,7 @@ public class OptimizationController : ControllerBase
             _logger.LogInformation("Replan: используется Live State (от {Now})", nowUtc);
             
             var dbEngs = await _engineers.GetAvailableEngineersAsync(depotId, district, ct);
-            var baseEngineers = dbEngs.Select(ToEngineerInputDto).ToList();
+            var baseEngineers = dbEngs.Select(e => AlignEngineerShift(e, nowUtc, mskOffset)).ToList();
             var allEngineers = new List<EngineerInputDto>();
             
             foreach (var baseEng in baseEngineers)
@@ -324,19 +324,7 @@ public class OptimizationController : ControllerBase
 
         // 2. Берём всех инженеров из БД, накладываем на них Live State (если есть)
         var engEntities = await _engineers.GetAvailableEngineersAsync(ct: ct);
-        var baseEngineers = engEntities.Select(e => new EngineerInputDto(
-            ExternalId: e.ExternalId,
-            Name: e.Name,
-            StartAddress: e.StartLocation.RawAddress,
-            StartLatitude: e.StartLocation.Coordinates.Latitude,
-            StartLongitude: e.StartLocation.Coordinates.Longitude,
-            ShiftStart: now,
-            ShiftEnd: e.Shift.End,
-            Transport: e.Transport,
-            Skills: [.. e.Skills],
-            MaxOrdersPerShift: e.MaxOrdersPerShift,
-            District: e.District,
-            DepotId: e.DepotId)).ToList();
+        var baseEngineers = engEntities.Select(e => AlignEngineerShift(e, now, mskOffset)).ToList();
             
         List<EngineerInputDto> engineers = new List<EngineerInputDto>();
         foreach (var baseEng in baseEngineers)
@@ -625,6 +613,42 @@ public class OptimizationController : ControllerBase
                 _jobStore.Fail(jobId, ex.Message);
             }
         });
+    }
+
+    private static EngineerInputDto AlignEngineerShift(Engineer e, DateTimeOffset targetDateOrNow, TimeSpan mskOffset)
+    {
+        var shiftMskStart = e.Shift.Start.ToOffset(mskOffset);
+        var shiftMskEnd = e.Shift.End.ToOffset(mskOffset);
+        var shiftDuration = shiftMskEnd - shiftMskStart;
+        if (shiftDuration <= TimeSpan.Zero) shiftDuration += TimeSpan.FromDays(1);
+
+        var targetMsk = targetDateOrNow.ToOffset(mskOffset);
+        var alignedStartMsk = new DateTimeOffset(
+            targetMsk.Year, targetMsk.Month, targetMsk.Day,
+            shiftMskStart.Hour, shiftMskStart.Minute, shiftMskStart.Second,
+            mskOffset);
+        var alignedEndMsk = alignedStartMsk + shiftDuration;
+        if (alignedEndMsk <= targetMsk) alignedEndMsk = targetMsk + shiftDuration;
+
+        var startUtc = alignedStartMsk.ToUniversalTime();
+        if (startUtc < targetDateOrNow)
+        {
+            startUtc = targetDateOrNow;
+        }
+
+        return new EngineerInputDto(
+            ExternalId: e.ExternalId,
+            Name: e.Name,
+            StartAddress: e.StartLocation.RawAddress,
+            StartLatitude: e.StartLocation.Coordinates.Latitude,
+            StartLongitude: e.StartLocation.Coordinates.Longitude,
+            ShiftStart: startUtc,
+            ShiftEnd: alignedEndMsk.ToUniversalTime(),
+            Transport: e.Transport,
+            Skills: [.. e.Skills],
+            MaxOrdersPerShift: e.MaxOrdersPerShift,
+            District: e.District,
+            DepotId: e.DepotId);
     }
 
     private static EngineerInputDto ToEngineerInputDto(Engineer e) => new(

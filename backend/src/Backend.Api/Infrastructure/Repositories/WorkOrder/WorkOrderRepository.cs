@@ -248,7 +248,9 @@ public class WorkOrderRepository(AppDbContext db) : IWorkOrderRepository
         if (stopOrderIds.Count > 0)
         {
             await db.WorkOrders
-                .Where(w => stopOrderIds.Contains(w.Id))
+                .Where(w => stopOrderIds.Contains(w.Id)
+                         && w.Status != OrderStatus.Cancelled
+                         && w.Status != OrderStatus.Completed)
                 .ExecuteUpdateAsync(s => s.SetProperty(w => w.Status, OrderStatus.NotDispatched), ct);
         }
     }

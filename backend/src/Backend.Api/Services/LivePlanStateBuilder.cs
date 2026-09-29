@@ -158,19 +158,42 @@ public sealed class LivePlanStateBuilder(
         Backend.Contracts.Domain.Entities.Engineer eng,
         double currentLat,
         double currentLon,
-        DateTimeOffset availableFrom) => new(
-        ExternalId: eng.ExternalId,
-        Name: eng.Name,
-        StartAddress: eng.StartLocation.RawAddress,
-        StartLatitude: currentLat,
-        StartLongitude: currentLon,
-        ShiftStart: availableFrom,
-        ShiftEnd: eng.Shift.End,
-        Transport: eng.Transport,
-        Skills: [.. eng.Skills],
-        MaxOrdersPerShift: eng.MaxOrdersPerShift,
-        District: eng.District,
-        DepotId: eng.DepotId);
+        DateTimeOffset availableFrom)
+    {
+        var mskOffset = TimeSpan.FromHours(3);
+        var availMsk = availableFrom.ToOffset(mskOffset);
+        var shiftMskStart = eng.Shift.Start.ToOffset(mskOffset);
+        var shiftMskEnd = eng.Shift.End.ToOffset(mskOffset);
+
+        var shiftDuration = shiftMskEnd - shiftMskStart;
+        if (shiftDuration <= TimeSpan.Zero)
+            shiftDuration += TimeSpan.FromDays(1);
+
+        var alignedStartMsk = new DateTimeOffset(
+            availMsk.Year, availMsk.Month, availMsk.Day,
+            shiftMskStart.Hour, shiftMskStart.Minute, shiftMskStart.Second,
+            mskOffset);
+
+        var alignedEndMsk = alignedStartMsk + shiftDuration;
+        if (alignedEndMsk <= availMsk)
+        {
+            alignedEndMsk = availMsk + shiftDuration;
+        }
+
+        return new(
+            ExternalId: eng.ExternalId,
+            Name: eng.Name,
+            StartAddress: eng.StartLocation.RawAddress,
+            StartLatitude: currentLat,
+            StartLongitude: currentLon,
+            ShiftStart: availableFrom,
+            ShiftEnd: alignedEndMsk.ToUniversalTime(),
+            Transport: eng.Transport,
+            Skills: [.. eng.Skills],
+            MaxOrdersPerShift: eng.MaxOrdersPerShift,
+            District: eng.District,
+            DepotId: eng.DepotId);
+    }
 
     private static WorkOrderInputDto ToWorkOrderInputDto(WorkOrder o) => new()
     {

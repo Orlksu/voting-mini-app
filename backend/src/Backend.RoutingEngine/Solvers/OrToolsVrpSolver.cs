@@ -13,7 +13,7 @@ public class OrToolsVrpSolver
     private const long MaxHorizonMinutes = 24 * 60;
     private const int DefaultTimeLimitSeconds = 25;
     private const double MaxPedestrianFromDepotKm = 2.0;
-    private const double MaxPedestrianLegKm = 1.8;
+    private const double MaxPedestrianLegKm = 2.0;
     private const double MaxTransitLegKm = 6.5;
 
     // Штрафы за дроп заявки: разрыв 10× гарантирует, что Emergency никогда не вытесняется Normal/Low.
@@ -360,9 +360,7 @@ public class OrToolsVrpSolver
 
         
         RoutingSearchParameters searchParameters = operations_research_constraint_solver.DefaultRoutingSearchParameters();
-        // Стратегия Savings (Эвристика Кларка-Райта) — классический алгоритм для VRP, 
-        // часто дает отличный старт для дальнейшей оптимизации.
-        searchParameters.FirstSolutionStrategy = FirstSolutionStrategy.Types.Value.Savings;
+        searchParameters.FirstSolutionStrategy = FirstSolutionStrategy.Types.Value.ParallelCheapestInsertion;
         
         // Tabu Search сходится к оптимальному значению гораздо быстрее и не имеет эффекта 
         // "раскачки" (осцилляции) в конце поиска, в отличие от Guided Local Search.
@@ -376,10 +374,9 @@ public class OrToolsVrpSolver
         searchParameters.LocalSearchOperators.UseLinKernighan = Google.OrTools.Util.OptionalBoolean.BoolTrue;
         searchParameters.LocalSearchOperators.UseNodePairSwapActive = Google.OrTools.Util.OptionalBoolean.BoolTrue;
         
-        // Даем алгоритму достаточно времени, чтобы "докопать" до 182 км.
         searchParameters.TimeLimit = new Google.Protobuf.WellKnownTypes.Duration
         {
-            Seconds = Math.Max(1, timeLimitSeconds > 0 ? timeLimitSeconds : 35)
+            Seconds = Math.Max(1, Math.Min(15, timeLimitSeconds > 0 ? timeLimitSeconds : 15))
         };
         // Жесткий лимит решений убираем, так как он "душил" алгоритм слишком рано
 
