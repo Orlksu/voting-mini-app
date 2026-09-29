@@ -4,10 +4,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Header from '../../components/Header/Header.tsx'
 import EngineerList from '../../components/EngineerList/EngineerList.tsx'
 import RequestsModal from '../../components/RequestsModal/RequestsModal.tsx'
-import UploadCsvModal from '../../components/UploadCsvModal/UploadCsvModal.tsx'
+import ImportModal from '../../components/ImportModal/ImportModal.tsx'
+import type { ImportModalTab } from '../../components/ImportModal/ImportModal.tsx'
+import OrderForm from '../../components/OrderForm/OrderForm.tsx'
+import BrigadeForm from '../../components/BrigadeForm/BrigadeForm.tsx'
 import ImportProgress from '../../components/JobProgress/ImportProgress.tsx'
 import type { ImportTarget } from '../../components/JobProgress/ImportProgress.tsx'
-import AddBrigadesModal from '../../components/AddBrigadesModal/AddBrigadesModal.tsx'
 import type { CsvUpload } from '../../components/CsvUploadForm/CsvUploadForm.tsx'
 import OptimizationProgress from '../../components/JobProgress/OptimizationProgress.tsx'
 import JobProgressCard from '../../components/JobProgress/JobProgressCard.tsx'
@@ -95,8 +97,11 @@ export default function Main() {
   >(null)
   const isBrigadesOpen = activePanel === 'brigades'
   const isRequestsOpen = activePanel === 'requests'
-  const [isUploadModalOpen, setIsUploadModalOpen] = useState(false)
-  const [isAddBrigadesOpen, setIsAddBrigadesOpen] = useState(false)
+  const [ordersModalTab, setOrdersModalTab] = useState<ImportModalTab | null>(
+    null,
+  )
+  const [brigadesModalTab, setBrigadesModalTab] =
+    useState<ImportModalTab | null>(null)
   const [deletedBrigade, setDeletedBrigade] = useState<{
     name: string
     assignedOrdersCount: number | null
@@ -232,7 +237,7 @@ export default function Main() {
   }
 
   const handleUploaded = (uploads: CsvUpload[], isAllUploaded: boolean) => {
-    if (isAllUploaded) setIsUploadModalOpen(false)
+    if (isAllUploaded) setOrdersModalTab(null)
     addImportJobs(uploads, 'orders')
   }
 
@@ -240,7 +245,7 @@ export default function Main() {
     uploads: CsvUpload[],
     isAllUploaded: boolean,
   ) => {
-    if (isAllUploaded) setIsAddBrigadesOpen(false)
+    if (isAllUploaded) setBrigadesModalTab(null)
     addImportJobs(uploads, 'engineers')
   }
 
@@ -436,11 +441,18 @@ export default function Main() {
         ? 0
         : null
 
+  const handleOrderCreated = async (order: WorkOrder) => {
+    setOrdersModalTab(null)
+    orderEngineerIndexRef.current = null
+    setOrders(await orderApi.getAll())
+    void handleOrderSelect(order.externalId)
+  }
+
   const handleBrigadeCreated = async (externalId: string) => {
     orderEngineerIndexRef.current = null
     const engineersData = await engineersApi.getAll()
     setEngineers(engineersData)
-    setIsAddBrigadesOpen(false)
+    setBrigadesModalTab(null)
 
     const created = engineersData.find(
       (engineer) => engineer.externalId === externalId,
@@ -497,7 +509,8 @@ export default function Main() {
           onCloseBrigades={handleCloseBrigades}
           isRequestsOpen={isRequestsOpen}
           onRequestsClick={handleRequestsClick}
-          onUploadFileClick={() => setIsUploadModalOpen(true)}
+          onUploadFileClick={() => setOrdersModalTab('csv')}
+          onManualOrderClick={() => setOrdersModalTab('manual')}
           onOptimizeClick={() => void startOptimization('optimize')}
           onReplanClick={() => void startOptimization('replan')}
           isOptimizing={isOptimizing}
@@ -512,7 +525,7 @@ export default function Main() {
               routeStatus={routeStatus}
               activeRouteOrdersCount={activeRouteOrdersCount}
               onActiveEngineerChange={handleActiveEngineerChange}
-              onAddClick={() => setIsAddBrigadesOpen(true)}
+              onAddClick={() => setBrigadesModalTab('csv')}
               onDelete={handleDeleteEngineer}
             />
           )}
@@ -530,19 +543,39 @@ export default function Main() {
         onCancel={handleOrderCancel}
       />
 
-      <UploadCsvModal
-        isOpen={isUploadModalOpen}
-        onClose={() => setIsUploadModalOpen(false)}
-        onUploaded={handleUploaded}
+      <ImportModal
+        title="добавить заявки"
+        tab={ordersModalTab}
+        onTabChange={setOrdersModalTab}
+        onClose={() => setOrdersModalTab(null)}
+        csv={{ upload: orderApi.uploadCsv, onUploaded: handleUploaded }}
+        renderManual={({ onBusyChange }) => (
+          <OrderForm
+            knownDistricts={knownDistricts}
+            onCreated={handleOrderCreated}
+            onBusyChange={onBusyChange}
+          />
+        )}
       />
 
-      <AddBrigadesModal
-        isOpen={isAddBrigadesOpen}
-        engineers={engineers}
-        knownDistricts={knownDistricts}
-        onClose={() => setIsAddBrigadesOpen(false)}
-        onUploaded={handleBrigadesUploaded}
-        onCreated={handleBrigadeCreated}
+      <ImportModal
+        title="добавить бригады"
+        tab={brigadesModalTab}
+        onTabChange={setBrigadesModalTab}
+        onClose={() => setBrigadesModalTab(null)}
+        csv={{
+          upload: engineersApi.uploadCsv,
+          onUploaded: handleBrigadesUploaded,
+          hint: 'перетащите CSV-файлы с бригадами сюда или нажмите, чтобы выбрать',
+        }}
+        renderManual={({ onBusyChange }) => (
+          <BrigadeForm
+            engineers={engineers}
+            knownDistricts={knownDistricts}
+            onCreated={handleBrigadeCreated}
+            onBusyChange={onBusyChange}
+          />
+        )}
       />
 
       <OptimizationResultModal
