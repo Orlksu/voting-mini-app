@@ -48,9 +48,10 @@ services:
   valhalla:
     # Пин фиксированной версии: latest — плавающий тег, повторный
     # `up -d --build` может молча подтянуть другую версию движка.
+    # Образ мультиархитектурный (amd64 + arm64): platform не фиксируем,
+    # иначе на Apple Silicon граф собирается под эмуляцией в разы дольше.
     image: ghcr.io/gis-ops/docker-valhalla/valhalla:3.5.1
     container_name: lct-valhalla
-    platform: linux/amd64
     restart: unless-stopped
     ports:
       - "8002:8002"
