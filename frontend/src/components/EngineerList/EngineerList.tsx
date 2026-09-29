@@ -13,6 +13,9 @@ type EngineerListProps = {
   error: string | null
   activeEngineerId: string | null
   routeStatus: EngineerRouteStatus
+  officeName?: string | null
+  routeColors?: Record<string, string>
+  onClearOffice?: () => void
   activeRouteOrdersCount: number | null
   onActiveEngineerChange: (engineerId: string | null) => void
   onAddClick: () => void
@@ -25,6 +28,9 @@ export default function EngineerList({
   error,
   activeEngineerId,
   routeStatus,
+  officeName = null,
+  routeColors = {},
+  onClearOffice,
   activeRouteOrdersCount,
   onActiveEngineerChange,
   onAddClick,
@@ -64,8 +70,24 @@ export default function EngineerList({
               </button>
             </div>
           )}
+          {!openedDetailsId && officeName && (
+            <div className={styles.officeChip}>
+              <span className="material-symbols-rounded">apartment</span>
+              <span className={styles.officeName}>офис {officeName}</span>
+              <button
+                type="button"
+                onClick={onClearOffice}
+                aria-label="Показать все бригады"
+                title="Показать все бригады"
+              >
+                <span className="material-symbols-rounded">close</span>
+              </button>
+            </div>
+          )}
           {!openedDetailsId && engineers.length === 0 && (
-            <p className={styles.empty}>бригад пока нет</p>
+            <p className={styles.empty}>
+              {officeName ? 'у офиса нет бригад' : 'бригад пока нет'}
+            </p>
           )}
           <div className={styles.listScrollArea}>
             <div className={styles.listScrollViewport}>
@@ -75,6 +97,7 @@ export default function EngineerList({
                   engineer={engineer}
                   isActive={engineer.id === activeEngineerId}
                   isDetails={engineer.id === openedDetailsId}
+                  routeColor={routeColors[engineer.id]}
                   routeStatus={
                     engineer.id === activeEngineerId ? routeStatus : 'idle'
                   }

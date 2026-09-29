@@ -3,6 +3,7 @@ export type WorkOrder = {
   externalId: string
   address: string
   district?: string
+  depotId?: string | null
   latitude: number
   longitude: number
   windowStart: string
