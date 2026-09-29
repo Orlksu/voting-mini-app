@@ -104,25 +104,44 @@ dc() { docker compose --env-file .env.staging -f docker-compose.yml -f docker-co
    область в граф не попала — переходить к откату.
 
 5. Когда всё работает несколько дней, резервную папку можно удалить:
-   `sudo rm -rf ~/valhalla-backup-*`.
+   `sudo rm -rf ~/valhalla-backup-*`. До этого не создавайте новых бэкапов
+   поверх: откат берёт самую свежую непустую папку.
 
 ## Откат
 
+Сначала проверяем, что есть что возвращать, и только потом трогаем текущий
+граф. Иначе при отсутствии бэкапа `valhalla-data` останется пустым, и образ
+при старте молча скачает и соберёт граф заново вместо отката.
+Берём самую свежую **непустую** резервную папку: их может быть несколько
+(например, пустая от прерванной попытки).
+
 ```bash
-dc stop valhalla
-failed="$HOME/valhalla-failed-$(date +%Y%m%d)"
-mkdir -p "$failed"
-for f in valhalla-data/*.osm.pbf valhalla-data/valhalla_tiles valhalla-data/valhalla_tiles.tar \
-         valhalla-data/file_hashes.txt valhalla-data/duplicateways.txt; do
-  if [ -e "$f" ]; then sudo mv "$f" "$failed"/; fi
+backup=""
+for d in $(ls -dt "$HOME"/valhalla-backup-* 2>/dev/null); do
+  if [ -n "$(ls -A "$d")" ]; then backup="$d"; break; fi
 done
-sudo mv "$HOME"/valhalla-backup-*/* valhalla-data/
-dc up -d --force-recreate valhalla
-docker inspect -f '{{.State.Health.Status}} restarts={{.RestartCount}}' lct-valhalla
+
+if [ -z "$backup" ]; then
+  echo "Нет непустой папки ~/valhalla-backup-*: откатывать не на что, ничего не трогаю."
+else
+  echo "Возвращаю граф из $backup"
+  ls "$backup"
+  dc stop valhalla
+  failed="$HOME/valhalla-failed-$(date +%Y%m%d-%H%M)"
+  mkdir -p "$failed"
+  for f in valhalla-data/*.osm.pbf valhalla-data/valhalla_tiles valhalla-data/valhalla_tiles.tar \
+           valhalla-data/file_hashes.txt valhalla-data/duplicateways.txt; do
+    if [ -e "$f" ]; then sudo mv "$f" "$failed"/; fi
+  done
+  sudo mv "$backup"/* valhalla-data/
+  dc up -d --force-recreate valhalla
+  docker inspect -f '{{.State.Health.Status}} restarts={{.RestartCount}}' lct-valhalla
+fi
 ```
 
 Старый граф поднимается сразу, без сборки: хеши его `.pbf` уже записаны
-в `file_hashes.txt`.
+в `file_hashes.txt`. Проверить, что пересборки не было:
+`docker logs lct-valhalla 2>&1 | grep -E 'No routing tiles|Downloading'` — пусто.
 
 ## Если сборка упала по памяти
 
