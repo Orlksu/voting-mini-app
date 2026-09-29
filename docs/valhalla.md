@@ -64,8 +64,10 @@
    ```bash
    backup="$HOME/valhalla-backup-$(date +%Y%m%d)"
    mkdir -p "$backup"
-   mv valhalla-data/Moscow.osm.pbf valhalla-data/valhalla_tiles \
-      valhalla-data/valhalla_tiles.tar valhalla-data/file_hashes.txt "$backup"/
+   for f in Moscow.osm.pbf valhalla_tiles valhalla_tiles.tar file_hashes.txt; do
+     if [ -e "valhalla-data/$f" ]; then mv "valhalla-data/$f" "$backup"/; else echo "нет $f — пропускаю"; fi
+   done
+   ls valhalla-data   # должен остаться только valhalla.json
    echo 'VALHALLA_SERVER_THREADS=1' >> .env.staging
    docker compose --env-file .env.staging -f docker-compose.yml \
      -f docker-compose.staging.yml up -d --force-recreate valhalla
@@ -99,9 +101,11 @@
    ```bash
    docker compose --env-file .env.staging -f docker-compose.yml \
      -f docker-compose.staging.yml stop valhalla
-   mkdir -p "$HOME/valhalla-failed-$(date +%Y%m%d)"
-   mv valhalla-data/*.osm.pbf valhalla-data/valhalla_tiles* valhalla-data/file_hashes.txt \
-      "$HOME/valhalla-failed-$(date +%Y%m%d)"/ 2>/dev/null
+   failed="$HOME/valhalla-failed-$(date +%Y%m%d)"
+   mkdir -p "$failed"
+   for f in valhalla-data/*.osm.pbf valhalla-data/valhalla_tiles valhalla-data/valhalla_tiles.tar valhalla-data/file_hashes.txt; do
+     if [ -e "$f" ]; then mv "$f" "$failed"/; fi
+   done
    mv "$HOME"/valhalla-backup-*/* valhalla-data/
    docker compose --env-file .env.staging -f docker-compose.yml \
      -f docker-compose.staging.yml up -d --force-recreate valhalla
@@ -112,7 +116,24 @@
 
 ## Если сборка упала по памяти
 
-Признак — в логах `Killed` или контейнер перезапускается во время сборки.
-Проверить `free -h` и `dmesg | tail`, увеличить swap, убедиться, что
-`VALHALLA_SERVER_THREADS=1`, затем повторить шаг 4 (частично собранные
-тайлы из `valhalla-data/` сначала отложить).
+Healthcheck контейнер не перезапускает: `restart: unless-stopped` срабатывает,
+только когда процесс сборки уже завершился (например, его убил OOM killer).
+
+Опасность в другом: после падения в `valhalla-data/valhalla_tiles` остаются
+недособранные тайлы. При перезапуске образ видит, что тайлы есть, и **молча
+начинает отдавать неполный граф** без пересборки
+(в логах `INFO: Routing tiles exist and no need to rebuild.`).
+
+Признаки:
+
+```bash
+docker inspect -f '{{.RestartCount}}' lct-valhalla   # > 0 во время сборки — была авария
+docker logs lct-valhalla 2>&1 | grep -E 'Killed|Routing tiles exist'
+dmesg | grep -i -E 'out of memory|killed process' | tail
+free -h
+```
+
+Что делать: остановить `valhalla`, отложить частично собранные
+`valhalla_tiles*` и `file_hashes.txt` в отдельную папку (выгрузки `.osm.pbf`
+можно оставить — повторно скачивать не придётся), увеличить swap, убедиться,
+что `VALHALLA_SERVER_THREADS=1`, и снова запустить шаг 4.
