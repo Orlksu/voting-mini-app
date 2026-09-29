@@ -6,9 +6,10 @@
 # Что делает:
 #   1. проверяет Docker, Docker Compose v2, curl и свободные порты;
 #   2. создаёт .env из .env.example, если его нет;
-#   3. docker compose up -d --build;
-#   4. ждёт готовности backend и frontend, затем графа Valhalla;
-#   5. печатает адреса.
+#   3. при пустом valhalla-data готовит карту Москвы с областью;
+#   4. docker compose up -d --build;
+#   5. ждёт готовности backend и frontend, затем графа Valhalla;
+#   6. печатает адреса.
 #
 # Скрипт ничего не удаляет: база и граф Valhalla сохраняются между запусками.
 # Остановить проект: docker compose down
@@ -22,7 +23,7 @@ VALHALLA_STATUS_URL="http://localhost:8002/status"
 PORTS=(8080 5001 5432 8002)
 # Сколько ждать сборки графа Valhalla. Приложение работает и без него,
 # поэтому по таймауту скрипт не падает, а только предупреждает.
-VALHALLA_WAIT_SECONDS="${VALHALLA_WAIT_SECONDS:-900}"
+VALHALLA_WAIT_SECONDS="${VALHALLA_WAIT_SECONDS:-1200}"
 
 if [ -t 1 ]; then
   bold=$'\033[1m'; green=$'\033[32m'; yellow=$'\033[33m'; red=$'\033[31m'; reset=$'\033[0m'
@@ -97,6 +98,35 @@ if ! grep -Eq '^VITE_MAPTILER_API_KEY=.+' .env; then
   warn "В .env пустой VITE_MAPTILER_API_KEY — интерфейс откроется без карты."
 fi
 
+step "Готовлю карту Москвы и Московской области для Valhalla"
+
+# Без подготовленной выгрузки образ Valhalla скачивает только Москву (BBBike,
+# примерно в пределах МКАД). Москву с областью склеивает отдельный скрипт.
+data_dir="valhalla-data"
+mkdir -p "$data_dir"
+existing_graph="$(find "$data_dir" -maxdepth 1 \( -name '*.pbf' -o -name 'valhalla_tiles*' \) -print)"
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*) is_git_bash=true ;;
+  *) is_git_bash=false ;;
+esac
+if [ -f "$data_dir/moscow_region.osm.pbf" ]; then
+  ok "Выгрузка Москвы с областью уже есть"
+elif [ -z "$existing_graph" ] && [ "$is_git_bash" = true ]; then
+  # В Git Bash MSYS переписывает пути в `docker run -v`, склейка ненадёжна.
+  warn "Git Bash: пропускаю подготовку области, граф будет только по Москве."
+  warn "Для Москвы с областью запустите ./start.sh из WSL2 (см. README)."
+elif [ -z "$existing_graph" ]; then
+  printf 'Скачиваю выгрузки OSM (~300 МБ) и склеиваю их, это несколько минут...\n'
+  if scripts/prepare-valhalla-region.sh; then
+    ok "Выгрузка Москвы с областью готова"
+  else
+    warn "Не удалось подготовить Москву с областью (сеть?). Valhalla соберёт граф только по Москве."
+  fi
+else
+  warn "В $data_dir уже есть граф без Московской области. Оставляю его."
+  warn "Как перейти на Москву с областью, не теряя старый граф: docs/valhalla.md"
+fi
+
 step "Собираю и запускаю контейнеры (первый раз — несколько минут)"
 
 docker compose up -d --build
@@ -110,7 +140,7 @@ wait_http "$FRONTEND_URL/" 60 \
   || fail "Frontend не ответил на $FRONTEND_URL за минуту. Логи: docker compose logs frontend"
 ok "Frontend готов"
 
-step "Жду граф дорог Valhalla (первый раз: скачивание карты Москвы и сборка, обычно 2–5 минут)"
+step "Жду граф дорог Valhalla (первый раз: сборка графа Москвы с областью, обычно 5–10 минут)"
 
 printf 'Интерфейс уже работает: %s\n' "$FRONTEND_URL"
 printf 'Пока графа нет, расстояния считаются по прямой.\n'
