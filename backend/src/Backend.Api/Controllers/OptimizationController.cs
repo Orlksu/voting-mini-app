@@ -1,3 +1,4 @@
+using Backend.Api.Services.GeoCodingService;
 using Backend.Api.Infrastructure.Repositories;
 using Backend.Api.Services;
 using Backend.Contracts.Domain.Entities;
@@ -312,6 +313,7 @@ public class OptimizationController : ControllerBase
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<ActionResult<JobStatusResponseDto>> Emergency(
         [FromBody] EmergencyOrderRequest request,
+        [FromServices] IGeocoder geocoder,
         CancellationToken ct = default)
     {
         var now = request.EventTime ?? DateTimeOffset.UtcNow;
@@ -351,7 +353,6 @@ public class OptimizationController : ControllerBase
         // Геокодируем ручную аварийную заявку, если координаты не переданы
         if ((!urgentOrder.Latitude.HasValue || !urgentOrder.Longitude.HasValue) && !string.IsNullOrWhiteSpace(urgentOrder.Address))
         {
-            var geocoder = HttpContext.RequestServices.GetRequiredService<Backend.Api.Services.GeoCodingService.IGeocoder>();
             var geo = await geocoder.GeocodeAsync(urgentOrder.Address, urgentOrder.District, ct);
             if (geo != null)
             {
