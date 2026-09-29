@@ -50,4 +50,8 @@ export const engineersApi = {
     )
     return response.data
   },
+
+  async remove(engineerId: string): Promise<void> {
+    await api.delete(`/engineers/${engineerId}`)
+  },
 }

@@ -12,6 +12,7 @@ import type { CsvUpload } from '../../components/CsvUploadForm/CsvUploadForm.tsx
 import OptimizationProgress from '../../components/JobProgress/OptimizationProgress.tsx'
 import JobProgressCard from '../../components/JobProgress/JobProgressCard.tsx'
 import JobProgressStack from '../../components/JobProgress/JobProgressStack.tsx'
+import DeletedBrigadeNotice from '../../components/JobProgress/DeletedBrigadeNotice.tsx'
 import OptimizationResultModal from '../../components/OptimizationResultModal/OptimizationResultModal.tsx'
 import { engineersApi } from '../../logic/engineerApi'
 import type { Engineer } from '../../types/engineer'
@@ -94,6 +95,10 @@ export default function Main() {
   const isRequestsOpen = activePanel === 'requests'
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false)
   const [isAddBrigadesOpen, setIsAddBrigadesOpen] = useState(false)
+  const [deletedBrigade, setDeletedBrigade] = useState<{
+    name: string
+    assignedOrdersCount: number | null
+  } | null>(null)
   const [progressJobs, setProgressJobs] = useState<ProgressJob[]>(
     readStoredProgressJobs,
   )
@@ -385,6 +390,12 @@ export default function Main() {
   const knownDistricts = [
     ...new Set(orders.map((order) => order.district ?? '').filter(Boolean)),
   ]
+  const activeRouteOrdersCount =
+    routeStatus === 'ready'
+      ? (engineerRoute?.stops.length ?? 0)
+      : routeStatus === 'empty' || routeStatus === 'notFound'
+        ? 0
+        : null
 
   const handleBrigadeCreated = async (externalId: string) => {
     orderEngineerIndexRef.current = null
@@ -397,6 +408,21 @@ export default function Main() {
     )
     setActivePanel('brigades')
     if (created) handleActiveEngineerChange(created.id)
+  }
+
+  const handleDeleteEngineer = async (engineer: Engineer) => {
+    const assignedOrdersCount =
+      engineer.id === activeEngineerId ? activeRouteOrdersCount : null
+
+    await engineersApi.remove(engineer.id)
+
+    handleActiveEngineerChange(null)
+    setDeletedBrigade({ name: engineer.name, assignedOrdersCount })
+    try {
+      await Promise.all([reloadEngineers(), reloadOrders()])
+    } catch {
+      setError('Бригада удалена, но список не обновился')
+    }
   }
 
   const selectedOrder = selectedOrderId
@@ -443,8 +469,10 @@ export default function Main() {
               error={error}
               activeEngineerId={activeEngineerId}
               routeStatus={routeStatus}
+              activeRouteOrdersCount={activeRouteOrdersCount}
               onActiveEngineerChange={handleActiveEngineerChange}
               onAddClick={() => setIsAddBrigadesOpen(true)}
+              onDelete={handleDeleteEngineer}
             />
           )}
         </div>
@@ -536,6 +564,18 @@ export default function Main() {
               onClose={() => removeProgressJob(job.jobId)}
             />
           ),
+        )}
+
+        {deletedBrigade && (
+          <DeletedBrigadeNotice
+            name={deletedBrigade.name}
+            assignedOrdersCount={deletedBrigade.assignedOrdersCount}
+            onClose={() => setDeletedBrigade(null)}
+            onReplan={() => {
+              setDeletedBrigade(null)
+              void startOptimization('replan')
+            }}
+          />
         )}
 
         {optimizationError && (

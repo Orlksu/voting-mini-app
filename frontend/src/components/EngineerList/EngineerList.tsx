@@ -13,8 +13,10 @@ type EngineerListProps = {
   error: string | null
   activeEngineerId: string | null
   routeStatus: EngineerRouteStatus
+  activeRouteOrdersCount: number | null
   onActiveEngineerChange: (engineerId: string | null) => void
   onAddClick: () => void
+  onDelete: (engineer: Engineer) => Promise<void>
 }
 
 export default function EngineerList({
@@ -23,8 +25,10 @@ export default function EngineerList({
   error,
   activeEngineerId,
   routeStatus,
+  activeRouteOrdersCount,
   onActiveEngineerChange,
   onAddClick,
+  onDelete,
 }: EngineerListProps) {
   const [detailsEngineerId, setDetailsEngineerId] = useState<string | null>(
     null,
@@ -87,7 +91,11 @@ export default function EngineerList({
                 />
               ))}
               {openedDetailsId && (
-                <EngineerDetails engineer={visibleEngineers[0]} />
+                <EngineerDetails
+                  engineer={visibleEngineers[0]}
+                  assignedOrdersCount={activeRouteOrdersCount}
+                  onDelete={onDelete}
+                />
               )}
             </div>
           </div>
