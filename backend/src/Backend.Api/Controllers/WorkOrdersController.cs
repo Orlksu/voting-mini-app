@@ -12,6 +12,7 @@ namespace Backend.Api.Controllers;
 
 [ApiController]
 [Route("api/v1/workorders")]
+[Route("api/v1/work-orders")]
 public class WorkOrdersController(
     IWorkOrderService workOrderService,
     OrderImportJobStore jobStore,
