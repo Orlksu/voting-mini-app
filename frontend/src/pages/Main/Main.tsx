@@ -17,6 +17,7 @@ import OptimizationResultModal from '../../components/OptimizationResultModal/Op
 import { engineersApi } from '../../logic/engineerApi'
 import type { Engineer } from '../../types/engineer'
 import type { WorkOrder } from '../../types/workOrder.ts'
+import { isTerminalOrderStatus } from '../../logic/orderStatus.ts'
 import { orderApi } from '../../logic/orderApi.ts'
 import type { EngineerRoute } from '../../types/engineerRoute.ts'
 import type { EngineerRouteStatus } from '../../components/EngineerList/EngineerList.tsx'
@@ -351,18 +352,20 @@ export default function Main() {
 
   const routeOrders: WorkOrder[] = useMemo(
     () =>
-      engineerRoute?.stops.map((stop) => ({
-        id: stop.externalOrderId,
-        externalId: stop.externalOrderId,
-        address: stop.address,
-        latitude: stop.latitude,
-        longitude: stop.longitude,
-        windowStart: stop.serviceStart,
-        windowEnd: stop.serviceEnd,
-        priority: stop.priority,
-        status: 'Assigned',
-        taskType: stop.taskType,
-      })) ?? [],
+      engineerRoute?.stops
+        .filter((stop) => !isTerminalOrderStatus(stop.status))
+        .map((stop) => ({
+          id: stop.orderId ?? stop.externalOrderId,
+          externalId: stop.externalOrderId,
+          address: stop.address,
+          latitude: stop.latitude,
+          longitude: stop.longitude,
+          windowStart: stop.serviceStart,
+          windowEnd: stop.serviceEnd,
+          priority: stop.priority,
+          status: stop.status ?? 'Assigned',
+          taskType: stop.taskType,
+        })) ?? [],
     [engineerRoute],
   )
 
@@ -387,6 +390,9 @@ export default function Main() {
         ? 'notFound'
         : 'loading'
   const isShowingRoute = routeStatus === 'ready'
+  const activeOrders = orders.filter(
+    (order) => !isTerminalOrderStatus(order.status),
+  )
   const knownDistricts = [
     ...new Set(orders.map((order) => order.district ?? '').filter(Boolean)),
   ]
@@ -438,7 +444,7 @@ export default function Main() {
     <div className={styles.mainContainer}>
       <div className={styles.mapLayer}>
         <RoutingMap
-          workOrders={isShowingRoute ? routeOrders : orders}
+          workOrders={isShowingRoute ? routeOrders : activeOrders}
           isEngineerRoute={isShowingRoute}
           encodedPolyline={engineerRoute?.encodedPolyline}
           startPoint={routeStartPoint}
