@@ -144,6 +144,7 @@ public class OptimizationController : ControllerBase
         [FromQuery] Guid? depotId = null,
         [FromQuery] string? district = null,
         [FromQuery] DateTimeOffset? date = null,
+        [FromQuery] DateTimeOffset? currentTime = null,
         CancellationToken ct = default)
     {
         var mskOffset = TimeSpan.FromHours(3);
@@ -170,14 +171,16 @@ public class OptimizationController : ControllerBase
             }
         }
 
-        var nowUtc = DateTimeOffset.UtcNow;
+        // Если передан currentTime (симуляция) — используем его, иначе реальное время сервера
+        var nowUtc = currentTime ?? DateTimeOffset.UtcNow;
         var nowMskCurrent = nowUtc.ToOffset(mskOffset);
+        // При симуляции считаем targetDate "сегодняшним" днём относительно переданного времени
         bool isToday = targetDate.Date == nowMskCurrent.Date;
 
         List<EngineerInputDto> finalEngineers;
         List<WorkOrderInputDto> finalOrders;
 
-        // Пытаемся использовать Live State (учет реального времени суток и выполненных заявок)
+        // Пытаемся использовать Live State (учет реального/симулированного времени суток)
         var contexts = isToday ? await _liveState.BuildAsync(nowUtc, ct) : [];
 
         if (isToday && contexts.Count > 0)

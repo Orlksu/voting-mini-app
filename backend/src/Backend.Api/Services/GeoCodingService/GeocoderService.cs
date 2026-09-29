@@ -13,10 +13,32 @@ namespace Backend.Api.Services.GeoCodingService;
 
 public class GeocoderService(HttpClient httpClient, IGeocodeCacheRepository cache, ILogger<GeocoderService> logger) : IGeocoder
 {
+
+    private static readonly (string Needle, double Lat, double Lon, string District)[] ManualOverrides =
+    [
+        ("Талалихина, д. 16",  55.7355, 37.6768, "Таганский"),
+    ];
+
     public async Task<GeocoderResultDto?> GeocodeAsync(string address, string? district = null, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(address))
             return null;
+
+
+        foreach (var (needle, lat, lon, overrideDistrict) in ManualOverrides)
+        {
+            if (address.Contains(needle, StringComparison.OrdinalIgnoreCase))
+            {
+                
+                return new GeocoderResultDto
+                {
+                    LatString = lat.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    LonString = lon.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    DisplayName = address
+                };
+               
+            }
+        }
 
         var rawQuery = QueryKey(address, district);
 
@@ -73,18 +95,41 @@ public class GeocoderService(HttpClient httpClient, IGeocodeCacheRepository cach
             .Distinct()
             .ToList();
 
-        var queryKeys = distinctItems
+        var result = new Dictionary<string, GeocoderResultDto?>(StringComparer.OrdinalIgnoreCase);
+        var toProcess = new List<(string Address, string? District)>();
+
+        foreach (var item in distinctItems)
+        {
+            var key = QueryKey(item.Address, item.District);
+            bool overridden = false;
+            foreach (var (needle, lat, lon, overrideDistrict) in ManualOverrides)
+            {
+                if (item.Address.Contains(needle, StringComparison.OrdinalIgnoreCase))
+                {
+                    result[key] = new GeocoderResultDto
+                    {
+                        LatString = lat.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                        LonString = lon.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                        DisplayName = item.Address
+                    };
+                    overridden = true;
+                    break;
+                }
+            }
+            if (!overridden) toProcess.Add(item);
+        }
+
+        var queryKeys = toProcess
             .Select(x => QueryKey(x.Address, x.District))
             .Distinct()
             .ToList();
 
         var cachedMap = await cache.GetBatchByQueriesAsync(queryKeys, ct);
-        var result = new Dictionary<string, GeocoderResultDto?>(StringComparer.OrdinalIgnoreCase);
 
-        int processed = 0;
+        int processed = distinctItems.Count - toProcess.Count;
         int total = distinctItems.Count;
 
-        foreach (var (address, district) in distinctItems)
+        foreach (var (address, district) in toProcess)
         {
             var key = QueryKey(address, district);
             if (result.ContainsKey(key))

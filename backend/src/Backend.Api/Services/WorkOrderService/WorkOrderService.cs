@@ -421,7 +421,6 @@ public class WorkOrderService(
             finalDepotId = depot.Id;
             finalDistrict = depot.District;
         }
-        // 2. Приоритет: явное указание района заявки (request.District)
         else if (!string.IsNullOrWhiteSpace(request.District))
         {
             var district = request.District.Trim();
@@ -434,7 +433,6 @@ public class WorkOrderService(
             finalDepotId = depot.Id;
             finalDistrict = district;
         }
-        // 3. Приоритет: автоматический подбор ближайшего депо по формуле Haversine
         else
         {
             var allDepots = await depots.GetAllAsync(ct);
