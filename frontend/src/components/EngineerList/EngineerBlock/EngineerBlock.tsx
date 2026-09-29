@@ -14,6 +14,7 @@ interface EngineerBlockProps {
   isActive: boolean
   isDetails: boolean
   routeStatus: EngineerRouteStatus
+  routeColor?: string
   onClick: () => void
   onDetailsClick: () => void
 }
@@ -23,6 +24,7 @@ export default function EngineerBlock({
   isActive,
   isDetails,
   routeStatus,
+  routeColor,
   onClick,
   onDetailsClick,
 }: EngineerBlockProps) {
@@ -50,6 +52,13 @@ export default function EngineerBlock({
             бригада №{engineer.externalId.split('-')[1] ?? engineer.externalId}
           </p>
           <p className={styles.nameEngineer}>{engineer.name}</p>
+          {routeColor && (
+            <span
+              className={styles.routeColor}
+              style={{ background: routeColor }}
+              aria-hidden="true"
+            />
+          )}
           {routeStatusLabel && (
             <p className={styles.routeStatus}>{routeStatusLabel}</p>
           )}

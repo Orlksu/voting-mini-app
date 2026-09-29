@@ -18,3 +18,37 @@
   font-size: 28px;
   line-height: 1;
 }
+
+.depotMarker {
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+
+  color: rgb(234 190 95);
+  background: #1b1a1a;
+  border: 2px solid rgb(234 190 95 / 70%);
+  border-radius: 10px;
+  box-shadow: 0 3px 10px rgb(0 0 0 / 0.45);
+  transition:
+    transform 0.2s ease-in-out,
+    background 0.2s ease-in-out;
+
+  span {
+    font-size: 20px;
+  }
+}
+
+.depotMarker:hover {
+  transform: scale(1.1);
+}
+
+.depotMarkerActive {
+  color: #0f0f0f;
+  background: #fbb72c;
+  border-color: #fbb72c;
+  transform: scale(1.15);
+}

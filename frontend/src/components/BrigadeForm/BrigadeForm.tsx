@@ -1,12 +1,12 @@
 import { useState } from 'react'
 import type { FormEvent } from 'react'
-import styles from './AddBrigadesModal.module.css'
+import styles from '../forms/Form.module.css'
 import { engineersApi } from '../../logic/engineerApi.ts'
 import type { Engineer } from '../../types/engineer'
 import type { SkillType, TransportType } from '../../types/optimization.ts'
 import { brigadeToCsvFile, nextEngineerExternalId } from './brigadeCsv.ts'
-import AddressInput from './AddressInput.tsx'
-import { normalizeDistrict } from '../../logic/geocodingApi.ts'
+import AddressInput from '../forms/AddressInput.tsx'
+import { matchKnownDistrict, uniqueDistricts } from '../forms/district.ts'
 import type { AddressSuggestion } from '../../logic/geocodingApi.ts'
 
 const TRANSPORT_OPTIONS: { value: TransportType; label: string }[] = [
@@ -22,10 +22,6 @@ const SKILL_OPTIONS: { value: SkillType; label: string }[] = [
   { value: 'Emergency', label: 'аварийные работы' },
 ]
 
-function districtKey(value: string) {
-  return normalizeDistrict(value).toLowerCase().replace(/ё/g, 'е')
-}
-
 type BrigadeFormProps = {
   engineers: Engineer[]
   knownDistricts: string[]
@@ -40,13 +36,10 @@ export default function BrigadeForm({
   onBusyChange,
 }: BrigadeFormProps) {
   const externalId = nextEngineerExternalId(engineers)
-  const districts = [
-    ...new Set(
-      [...engineers.map((engineer) => engineer.district), ...knownDistricts]
-        .map((item) => item?.trim())
-        .filter(Boolean),
-    ),
-  ].sort((a, b) => a.localeCompare(b, 'ru'))
+  const districts = uniqueDistricts([
+    ...engineers.map((engineer) => engineer.district),
+    ...knownDistricts,
+  ])
 
   const [name, setName] = useState('')
   const [district, setDistrict] = useState('')
@@ -77,9 +70,7 @@ export default function BrigadeForm({
     })
 
     if (suggestion.district && (district.trim() === '' || isDistrictAuto)) {
-      const key = districtKey(suggestion.district)
-      const known = districts.find((item) => districtKey(item) === key)
-      setDistrict(known ?? suggestion.district)
+      setDistrict(matchKnownDistrict(suggestion.district, districts))
       setIsDistrictAuto(true)
     }
   }

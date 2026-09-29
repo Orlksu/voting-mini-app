@@ -1,31 +1,34 @@
 import { useEffect, useState } from 'react'
-import styles from './AddBrigadesModal.module.css'
+import type { ReactNode } from 'react'
+import styles from './ImportModal.module.css'
 import CsvUploadForm from '../CsvUploadForm/CsvUploadForm.tsx'
 import type { CsvUpload } from '../CsvUploadForm/CsvUploadForm.tsx'
-import BrigadeForm from './BrigadeForm.tsx'
-import { engineersApi } from '../../logic/engineerApi.ts'
-import type { Engineer } from '../../types/engineer'
 
-type Tab = 'csv' | 'manual'
+export type ImportModalTab = 'csv' | 'manual'
 
-type AddBrigadesModalProps = {
-  isOpen: boolean
-  engineers: Engineer[]
-  knownDistricts: string[]
+type ImportModalProps = {
+  title: string
+  tab: ImportModalTab | null
+  onTabChange: (tab: ImportModalTab) => void
   onClose: () => void
-  onUploaded: (uploads: CsvUpload[], isAllUploaded: boolean) => void
-  onCreated: (externalId: string) => Promise<void>
+  csv: {
+    upload: (file: File) => Promise<{ jobId: string }>
+    onUploaded: (uploads: CsvUpload[], isAllUploaded: boolean) => void
+    hint?: string
+  }
+  renderManual: (props: {
+    onBusyChange: (isBusy: boolean) => void
+  }) => ReactNode
 }
 
-export default function AddBrigadesModal({
-  isOpen,
-  engineers,
-  knownDistricts,
+export default function ImportModal({
+  title,
+  tab,
+  onTabChange,
   onClose,
-  onUploaded,
-  onCreated,
-}: AddBrigadesModalProps) {
-  const [tab, setTab] = useState<Tab>('csv')
+  csv,
+  renderManual,
+}: ImportModalProps) {
   const [isBusy, setIsBusy] = useState(false)
 
   const handleClose = () => {
@@ -33,7 +36,7 @@ export default function AddBrigadesModal({
   }
 
   useEffect(() => {
-    if (!isOpen) return
+    if (!tab) return
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') handleClose()
@@ -43,7 +46,7 @@ export default function AddBrigadesModal({
     return () => document.removeEventListener('keydown', handleKeyDown)
   })
 
-  if (!isOpen) return null
+  if (!tab) return null
 
   return (
     <div className={styles.overlay} onClick={handleClose}>
@@ -53,7 +56,7 @@ export default function AddBrigadesModal({
         aria-modal="true"
         onClick={(event) => event.stopPropagation()}
       >
-        <p className={styles.title}>добавить бригады</p>
+        <p className={styles.title}>{title}</p>
 
         <div className={styles.tabs} role="tablist">
           <button
@@ -62,7 +65,7 @@ export default function AddBrigadesModal({
             aria-selected={tab === 'csv'}
             className={tab === 'csv' ? styles.tabActive : undefined}
             disabled={isBusy}
-            onClick={() => setTab('csv')}
+            onClick={() => onTabChange('csv')}
           >
             из CSV
           </button>
@@ -72,7 +75,7 @@ export default function AddBrigadesModal({
             aria-selected={tab === 'manual'}
             className={tab === 'manual' ? styles.tabActive : undefined}
             disabled={isBusy}
-            onClick={() => setTab('manual')}
+            onClick={() => onTabChange('manual')}
           >
             вручную
           </button>
@@ -80,18 +83,13 @@ export default function AddBrigadesModal({
 
         {tab === 'csv' ? (
           <CsvUploadForm
-            upload={engineersApi.uploadCsv}
-            onUploaded={onUploaded}
+            upload={csv.upload}
+            onUploaded={csv.onUploaded}
             onBusyChange={setIsBusy}
-            hint="перетащите CSV-файлы с бригадами сюда или нажмите, чтобы выбрать"
+            hint={csv.hint}
           />
         ) : (
-          <BrigadeForm
-            engineers={engineers}
-            knownDistricts={knownDistricts}
-            onCreated={onCreated}
-            onBusyChange={setIsBusy}
-          />
+          renderManual({ onBusyChange: setIsBusy })
         )}
       </div>
     </div>

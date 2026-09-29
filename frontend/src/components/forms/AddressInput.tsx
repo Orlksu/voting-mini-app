@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { KeyboardEvent } from 'react'
-import styles from './AddBrigadesModal.module.css'
+import styles from './Form.module.css'
 import { searchAddress } from '../../logic/geocodingApi.ts'
 import type { AddressSuggestion } from '../../logic/geocodingApi.ts'
 

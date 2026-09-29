@@ -1,0 +1,85 @@
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.modal {
+  display: flex;
+  flex-direction: column;
+  gap: 25px;
+
+  width: min(600px, calc(100vw - 60px));
+  max-height: calc(100vh - 60px);
+  padding: 30px;
+  overflow-y: auto;
+
+  background-color: rgb(27, 26, 26, 0.8);
+  border-radius: 30px;
+  color: #b3b3b3;
+
+  &::-webkit-scrollbar {
+    width: 12px;
+  }
+
+  &::-webkit-scrollbar-track {
+    margin: 25px 0;
+    background: transparent;
+  }
+
+  &::-webkit-scrollbar-thumb {
+    background: #eabe5f;
+    background-clip: padding-box;
+    border: 3px solid transparent;
+    border-radius: 30px;
+  }
+}
+
+@supports not selector(::-webkit-scrollbar) {
+  .modal {
+    scrollbar-color: #eabe5f transparent;
+  }
+}
+
+.title {
+  text-align: center;
+  font-size: 37px;
+}
+
+.tabs {
+  display: flex;
+  align-self: center;
+  gap: 10px;
+  padding: 7px 10px;
+
+  background: #292929;
+  border-radius: 30px;
+
+  button {
+    cursor: pointer;
+    padding: 5px 30px;
+
+    font: inherit;
+    font-size: 18px;
+    color: #b3b3b3;
+    background: transparent;
+    border: none;
+    border-radius: 30px;
+    transition: 0.2s all ease-in-out;
+  }
+
+  button:disabled {
+    cursor: default;
+  }
+
+  .tabActive {
+    color: #0f0f0f;
+    background: #fbb72c;
+  }
+}

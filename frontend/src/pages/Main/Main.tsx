@@ -4,10 +4,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Header from '../../components/Header/Header.tsx'
 import EngineerList from '../../components/EngineerList/EngineerList.tsx'
 import RequestsModal from '../../components/RequestsModal/RequestsModal.tsx'
-import UploadCsvModal from '../../components/UploadCsvModal/UploadCsvModal.tsx'
+import ImportModal from '../../components/ImportModal/ImportModal.tsx'
+import type { ImportModalTab } from '../../components/ImportModal/ImportModal.tsx'
+import OrderForm from '../../components/OrderForm/OrderForm.tsx'
+import BrigadeForm from '../../components/BrigadeForm/BrigadeForm.tsx'
 import ImportProgress from '../../components/JobProgress/ImportProgress.tsx'
 import type { ImportTarget } from '../../components/JobProgress/ImportProgress.tsx'
-import AddBrigadesModal from '../../components/AddBrigadesModal/AddBrigadesModal.tsx'
 import type { CsvUpload } from '../../components/CsvUploadForm/CsvUploadForm.tsx'
 import OptimizationProgress from '../../components/JobProgress/OptimizationProgress.tsx'
 import JobProgressCard from '../../components/JobProgress/JobProgressCard.tsx'
@@ -17,6 +19,11 @@ import OptimizationResultModal from '../../components/OptimizationResultModal/Op
 import { engineersApi } from '../../logic/engineerApi'
 import type { Engineer } from '../../types/engineer'
 import type { WorkOrder } from '../../types/workOrder.ts'
+import { isTerminalOrderStatus } from '../../logic/orderStatus.ts'
+import { depotApi } from '../../logic/depotApi.ts'
+import type { Depot } from '../../types/depot.ts'
+import { OFFICE_ROUTE_COLORS } from '../../components/map/officeRoutes.ts'
+import type { OfficeRoute } from '../../components/map/officeRoutes.ts'
 import { orderApi } from '../../logic/orderApi.ts'
 import type { EngineerRoute } from '../../types/engineerRoute.ts'
 import type { EngineerRouteStatus } from '../../components/EngineerList/EngineerList.tsx'
@@ -82,7 +89,14 @@ export default function Main() {
   const [engineers, setEngineers] = useState<Engineer[]>([])
   const [orders, setOrders] = useState<WorkOrder[]>([])
   const [activeEngineerId, setActiveEngineerId] = useState<string | null>(null)
+  const [depots, setDepots] = useState<Depot[]>([])
+  const [activeDepotId, setActiveDepotId] = useState<string | null>(null)
+  const [officeRoutesState, setOfficeRoutesState] = useState<{
+    key: string
+    routes: OfficeRoute[]
+  } | null>(null)
   const [engineerRoute, setEngineerRoute] = useState<EngineerRoute | null>(null)
+  const [routeReloadKey, setRouteReloadKey] = useState(0)
   const [routeErrorEngineerId, setRouteErrorEngineerId] = useState<
     string | null
   >(null)
@@ -93,8 +107,11 @@ export default function Main() {
   >(null)
   const isBrigadesOpen = activePanel === 'brigades'
   const isRequestsOpen = activePanel === 'requests'
-  const [isUploadModalOpen, setIsUploadModalOpen] = useState(false)
-  const [isAddBrigadesOpen, setIsAddBrigadesOpen] = useState(false)
+  const [ordersModalTab, setOrdersModalTab] = useState<ImportModalTab | null>(
+    null,
+  )
+  const [brigadesModalTab, setBrigadesModalTab] =
+    useState<ImportModalTab | null>(null)
   const [deletedBrigade, setDeletedBrigade] = useState<{
     name: string
     assignedOrdersCount: number | null
@@ -141,6 +158,13 @@ export default function Main() {
 
     void loadEngineers()
 
+    depotApi
+      .getAll(controller.signal)
+      .then(setDepots)
+      .catch(() => {
+        // без офисов карта работает, маркеры просто не появятся
+      })
+
     return () => {
       controller.abort()
     }
@@ -173,7 +197,85 @@ export default function Main() {
     return () => {
       controller.abort()
     }
-  }, [activeEngineerId])
+  }, [activeEngineerId, routeReloadKey])
+
+  const officeEngineers = useMemo(
+    () =>
+      activeDepotId
+        ? engineers
+            .filter((engineer) => engineer.depotId === activeDepotId)
+            .sort((a, b) =>
+              a.externalId.localeCompare(b.externalId, 'ru', { numeric: true }),
+            )
+        : [],
+    [engineers, activeDepotId],
+  )
+  const officeRoutesKey = activeDepotId
+    ? `${activeDepotId}:${officeEngineers.map((engineer) => engineer.id).join(',')}:${routeReloadKey}`
+    : null
+
+  const routeColors = useMemo(
+    () =>
+      Object.fromEntries(
+        officeEngineers.map((engineer, index) => [
+          engineer.id,
+          OFFICE_ROUTE_COLORS[index % OFFICE_ROUTE_COLORS.length],
+        ]),
+      ),
+    [officeEngineers],
+  )
+
+  useEffect(() => {
+    if (!officeRoutesKey) return
+
+    const controller = new AbortController()
+
+    const loadOfficeRoutes = async () => {
+      const results = await Promise.allSettled(
+        officeEngineers.map((engineer) =>
+          orderApi.getEngineerRoute(engineer.id, controller.signal),
+        ),
+      )
+      if (controller.signal.aborted) return
+
+      const routes: OfficeRoute[] = []
+      results.forEach((result, index) => {
+        if (result.status !== 'fulfilled') return
+        const route = result.value
+        const engineer = officeEngineers[index]
+        routes.push({
+          id: engineer.id,
+          color: routeColors[engineer.id],
+          encodedPolyline: route.encodedPolyline,
+          startPoint: {
+            latitude: route.startLatitude,
+            longitude: route.startLongitude,
+          },
+          stops: route.stops
+            .filter((stop) => !isTerminalOrderStatus(stop.status))
+            .map((stop) => ({
+              externalId: stop.externalOrderId,
+              latitude: stop.latitude,
+              longitude: stop.longitude,
+              priority: stop.priority,
+              sequence: stop.sequence,
+            })),
+        })
+      })
+      setOfficeRoutesState({ key: officeRoutesKey, routes })
+    }
+
+    void loadOfficeRoutes()
+
+    return () => {
+      controller.abort()
+    }
+  }, [officeRoutesKey, officeEngineers, routeColors])
+
+  const officeRoutes =
+    officeRoutesState && officeRoutesState.key === officeRoutesKey
+      ? officeRoutesState.routes
+      : []
 
   const reloadOrders = useCallback(async () => {
     orderEngineerIndexRef.current = null
@@ -230,7 +332,7 @@ export default function Main() {
   }
 
   const handleUploaded = (uploads: CsvUpload[], isAllUploaded: boolean) => {
-    if (isAllUploaded) setIsUploadModalOpen(false)
+    if (isAllUploaded) setOrdersModalTab(null)
     addImportJobs(uploads, 'orders')
   }
 
@@ -238,8 +340,40 @@ export default function Main() {
     uploads: CsvUpload[],
     isAllUploaded: boolean,
   ) => {
-    if (isAllUploaded) setIsAddBrigadesOpen(false)
+    if (isAllUploaded) setBrigadesModalTab(null)
     addImportJobs(uploads, 'engineers')
+  }
+
+  const refreshAfterOrderAction = async () => {
+    setSelectedOrderId(null)
+    orderEngineerIndexRef.current = null
+    if (activeEngineerId) setRouteReloadKey((key) => key + 1)
+    try {
+      await reloadOrders()
+    } catch {
+      // действие уже выполнено на сервере, список обновится при следующей загрузке
+    }
+  }
+
+  const handleOrderComplete = async (order: WorkOrder) => {
+    const updated = await orderApi.complete(order.id)
+    await refreshAfterOrderAction()
+    return updated
+  }
+
+  const handleOrderCancel = async (order: WorkOrder, reason: string) => {
+    const result = await orderApi.cancel(order.id, reason || undefined)
+    const replanJobId = result.replanJobId
+    if (replanJobId) {
+      setOptimizationResult(null)
+      setOptimizationError(null)
+      setProgressJobs((jobs) => [
+        ...jobs.filter((job) => job.type !== 'optimization'),
+        { type: 'optimization', jobId: replanJobId, mode: 'replan' },
+      ])
+    }
+    await refreshAfterOrderAction()
+    return result.order
   }
 
   const startOptimization = async (mode: OptimizationMode = 'optimize') => {
@@ -280,7 +414,19 @@ export default function Main() {
 
   const handleCloseBrigades = () => {
     setActivePanel(null)
+    setActiveDepotId(null)
     handleActiveEngineerChange(null)
+  }
+
+  const handleDepotClick = (depotId: string) => {
+    setSelectedOrderId(null)
+    handleActiveEngineerChange(null)
+    if (depotId === activeDepotId) {
+      setActiveDepotId(null)
+      return
+    }
+    setActiveDepotId(depotId)
+    setActivePanel('brigades')
   }
 
   const loadOrderEngineerIndex = async () => {
@@ -346,23 +492,27 @@ export default function Main() {
 
   const handleRequestsClick = () => {
     setActivePanel('requests')
+    setActiveDepotId(null)
     handleActiveEngineerChange(null)
   }
 
   const routeOrders: WorkOrder[] = useMemo(
     () =>
-      engineerRoute?.stops.map((stop) => ({
-        id: stop.externalOrderId,
-        externalId: stop.externalOrderId,
-        address: stop.address,
-        latitude: stop.latitude,
-        longitude: stop.longitude,
-        windowStart: stop.serviceStart,
-        windowEnd: stop.serviceEnd,
-        priority: stop.priority,
-        status: 'Assigned',
-        taskType: stop.taskType,
-      })) ?? [],
+      engineerRoute?.stops
+        .filter((stop) => !isTerminalOrderStatus(stop.status))
+        .map((stop) => ({
+          id: stop.orderId ?? stop.externalOrderId,
+          externalId: stop.externalOrderId,
+          address: stop.address,
+          latitude: stop.latitude,
+          longitude: stop.longitude,
+          windowStart: stop.serviceStart,
+          windowEnd: stop.serviceEnd,
+          priority: stop.priority,
+          status: stop.status ?? 'Assigned',
+          taskType: stop.taskType,
+          sequence: stop.sequence,
+        })) ?? [],
     [engineerRoute],
   )
 
@@ -387,6 +537,19 @@ export default function Main() {
         ? 'notFound'
         : 'loading'
   const isShowingRoute = routeStatus === 'ready'
+  const activeOrders = orders.filter(
+    (order) => !isTerminalOrderStatus(order.status),
+  )
+  const activeDepot = depots.find((depot) => depot.id === activeDepotId) ?? null
+  const isOfficeMode = activeDepotId !== null && !activeEngineerId
+  const mapOrders = isShowingRoute
+    ? routeOrders
+    : isOfficeMode
+      ? activeOrders.filter(
+          (order) =>
+            order.depotId === activeDepotId && order.status === 'NotDispatched',
+        )
+      : activeOrders
   const knownDistricts = [
     ...new Set(orders.map((order) => order.district ?? '').filter(Boolean)),
   ]
@@ -397,11 +560,18 @@ export default function Main() {
         ? 0
         : null
 
+  const handleOrderCreated = async (order: WorkOrder) => {
+    setOrdersModalTab(null)
+    orderEngineerIndexRef.current = null
+    setOrders(await orderApi.getAll())
+    void handleOrderSelect(order.externalId)
+  }
+
   const handleBrigadeCreated = async (externalId: string) => {
     orderEngineerIndexRef.current = null
     const engineersData = await engineersApi.getAll()
     setEngineers(engineersData)
-    setIsAddBrigadesOpen(false)
+    setBrigadesModalTab(null)
 
     const created = engineersData.find(
       (engineer) => engineer.externalId === externalId,
@@ -438,7 +608,11 @@ export default function Main() {
     <div className={styles.mainContainer}>
       <div className={styles.mapLayer}>
         <RoutingMap
-          workOrders={isShowingRoute ? routeOrders : orders}
+          workOrders={mapOrders}
+          depots={depots}
+          activeDepotId={activeDepotId}
+          onDepotClick={handleDepotClick}
+          officeRoutes={isOfficeMode ? officeRoutes : []}
           isEngineerRoute={isShowingRoute}
           encodedPolyline={engineerRoute?.encodedPolyline}
           startPoint={routeStartPoint}
@@ -446,6 +620,8 @@ export default function Main() {
           selectedOrderEngineerName={selectedOrderEngineerName}
           isSelectedOrderEngineerLoading={isResolvingOrderEngineer}
           onOrderSelect={handleOrderSelect}
+          onOrderComplete={handleOrderComplete}
+          onOrderCancel={handleOrderCancel}
         />
       </div>
 
@@ -456,7 +632,8 @@ export default function Main() {
           onCloseBrigades={handleCloseBrigades}
           isRequestsOpen={isRequestsOpen}
           onRequestsClick={handleRequestsClick}
-          onUploadFileClick={() => setIsUploadModalOpen(true)}
+          onUploadFileClick={() => setOrdersModalTab('csv')}
+          onManualOrderClick={() => setOrdersModalTab('manual')}
           onOptimizeClick={() => void startOptimization('optimize')}
           onReplanClick={() => void startOptimization('replan')}
           isOptimizing={isOptimizing}
@@ -464,14 +641,20 @@ export default function Main() {
         <div className={styles.contentLayer}>
           {isBrigadesOpen && (
             <EngineerList
-              engineers={engineers}
+              engineers={activeDepotId ? officeEngineers : engineers}
+              officeName={activeDepot?.name ?? null}
+              routeColors={isOfficeMode ? routeColors : {}}
+              onClearOffice={() => {
+                setActiveDepotId(null)
+                handleActiveEngineerChange(null)
+              }}
               isLoading={isLoading}
               error={error}
               activeEngineerId={activeEngineerId}
               routeStatus={routeStatus}
               activeRouteOrdersCount={activeRouteOrdersCount}
               onActiveEngineerChange={handleActiveEngineerChange}
-              onAddClick={() => setIsAddBrigadesOpen(true)}
+              onAddClick={() => setBrigadesModalTab('csv')}
               onDelete={handleDeleteEngineer}
             />
           )}
@@ -485,21 +668,43 @@ export default function Main() {
           setActivePanel(null)
           void handleOrderSelect(externalId)
         }}
+        onComplete={handleOrderComplete}
+        onCancel={handleOrderCancel}
       />
 
-      <UploadCsvModal
-        isOpen={isUploadModalOpen}
-        onClose={() => setIsUploadModalOpen(false)}
-        onUploaded={handleUploaded}
+      <ImportModal
+        title="добавить заявки"
+        tab={ordersModalTab}
+        onTabChange={setOrdersModalTab}
+        onClose={() => setOrdersModalTab(null)}
+        csv={{ upload: orderApi.uploadCsv, onUploaded: handleUploaded }}
+        renderManual={({ onBusyChange }) => (
+          <OrderForm
+            knownDistricts={knownDistricts}
+            onCreated={handleOrderCreated}
+            onBusyChange={onBusyChange}
+          />
+        )}
       />
 
-      <AddBrigadesModal
-        isOpen={isAddBrigadesOpen}
-        engineers={engineers}
-        knownDistricts={knownDistricts}
-        onClose={() => setIsAddBrigadesOpen(false)}
-        onUploaded={handleBrigadesUploaded}
-        onCreated={handleBrigadeCreated}
+      <ImportModal
+        title="добавить бригады"
+        tab={brigadesModalTab}
+        onTabChange={setBrigadesModalTab}
+        onClose={() => setBrigadesModalTab(null)}
+        csv={{
+          upload: engineersApi.uploadCsv,
+          onUploaded: handleBrigadesUploaded,
+          hint: 'перетащите CSV-файлы с бригадами сюда или нажмите, чтобы выбрать',
+        }}
+        renderManual={({ onBusyChange }) => (
+          <BrigadeForm
+            engineers={engineers}
+            knownDistricts={knownDistricts}
+            onCreated={handleBrigadeCreated}
+            onBusyChange={onBusyChange}
+          />
+        )}
       />
 
       <OptimizationResultModal
@@ -508,6 +713,7 @@ export default function Main() {
         engineers={engineers}
         onClose={() => setActivePanel(null)}
         onShowRoute={(engineerId) => {
+          setActiveDepotId(null)
           setActivePanel('brigades')
           handleActiveEngineerChange(engineerId)
         }}

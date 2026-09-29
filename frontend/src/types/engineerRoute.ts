@@ -12,6 +12,8 @@ export type EngineerRouteStop = {
   taskType: string
   priority: string
   assignmentReason: string
+  status?: string
+  orderId?: string | null
 }
 
 export type EngineerRoute = {

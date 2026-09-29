@@ -1,4 +1,8 @@
-import type { WorkOrder } from '../types/workOrder.ts'
+import type {
+  CreateWorkOrderRequest,
+  WorkOrder,
+  WorkOrderCancelResult,
+} from '../types/workOrder.ts'
 import type { EngineerRoute } from '../types/engineerRoute.ts'
 import type { OrderImportJob } from '../types/orderImport.ts'
 import { api } from '../api/api.ts'
@@ -43,6 +47,29 @@ export const orderApi = {
       `/workorders/import-jobs/${jobId}`,
       { signal },
     )
+    return response.data
+  },
+
+  async cancel(
+    orderId: string,
+    reason?: string,
+  ): Promise<WorkOrderCancelResult> {
+    const response = await api.post<WorkOrderCancelResult>(
+      `/workorders/${orderId}/cancel`,
+      reason ? { reason } : {},
+    )
+    return response.data
+  },
+
+  async complete(orderId: string): Promise<WorkOrder> {
+    const response = await api.post<WorkOrder>(
+      `/workorders/${orderId}/complete`,
+    )
+    return response.data
+  },
+
+  async create(request: CreateWorkOrderRequest): Promise<WorkOrder> {
+    const response = await api.post<WorkOrder>('/workorders', request)
     return response.data
   },
 }

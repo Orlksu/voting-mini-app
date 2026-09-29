@@ -8,6 +8,7 @@ type HeaderProps = {
   isRequestsOpen: boolean
   onRequestsClick: () => void
   onUploadFileClick: () => void
+  onManualOrderClick: () => void
   onOptimizeClick: () => void
   onReplanClick: () => void
   isOptimizing: boolean
@@ -20,6 +21,7 @@ export default function Header({
   isRequestsOpen,
   onRequestsClick,
   onUploadFileClick,
+  onManualOrderClick,
   onOptimizeClick,
   onReplanClick,
   isOptimizing,
@@ -57,7 +59,7 @@ export default function Header({
 
   return (
     <div className={styles.headerContainer}>
-      <p className={styles.title}>SMART ROUTING</p>
+      <p className={styles.logo}>smart routing</p>
       <div className={styles.buttons}>
         <nav>
           <p
@@ -101,7 +103,12 @@ export default function Header({
                 <span className="material-symbols-rounded">upload_file</span>
                 загрузить из файла (CSV)
               </p>
-              <p>
+              <p
+                onClick={() => {
+                  setIsUploadOpen(false)
+                  onManualOrderClick()
+                }}
+              >
                 <span className="material-symbols-rounded">edit_square</span>
                 ввести вручную
               </p>

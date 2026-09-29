@@ -1,12 +1,16 @@
 import { Popup } from 'react-map-gl/maplibre'
 import styles from './OrderPopup.module.css'
 import type { WorkOrder } from '../../types/workOrder.ts'
+import OrderActions from '../OrderActions/OrderActions.tsx'
+import { ORDER_STATUS_LABELS } from '../../logic/orderStatus.ts'
 
 type OrderPopupProps = {
   order: WorkOrder
   engineerName: string | null
   isEngineerLoading: boolean
   onClose: () => void
+  onComplete: (order: WorkOrder) => Promise<unknown>
+  onCancel: (order: WorkOrder, reason: string) => Promise<unknown>
 }
 
 const PRIORITY_LABELS: Record<string, string> = {
@@ -14,15 +18,6 @@ const PRIORITY_LABELS: Record<string, string> = {
   Normal: 'обычный',
   High: 'высокий',
   Emergency: 'авария',
-}
-
-const STATUS_LABELS: Record<string, string> = {
-  NotDispatched: 'не распределена',
-  Dispatched: 'назначена',
-  Assigned: 'назначена',
-  InProgress: 'в работе',
-  Completed: 'выполнена',
-  Cancelled: 'отменена',
 }
 
 const timeFormatter = new Intl.DateTimeFormat('ru-RU', {
@@ -48,6 +43,8 @@ export default function OrderPopup({
   engineerName,
   isEngineerLoading,
   onClose,
+  onComplete,
+  onCancel,
 }: OrderPopupProps) {
   const isEmergency = order.priority === 'Emergency'
 
@@ -83,16 +80,22 @@ export default function OrderPopup({
             {PRIORITY_LABELS[order.priority] ?? order.priority}
           </dd>
           <dt>статус</dt>
-          <dd>{STATUS_LABELS[order.status] ?? order.status}</dd>
+          <dd>{ORDER_STATUS_LABELS[order.status] ?? order.status}</dd>
           {(engineerName || isEngineerLoading) && (
             <>
               <dt>бригада</dt>
-              <dd className={styles.engineer}>
-                {engineerName ?? 'поиск...'}
-              </dd>
+              <dd className={styles.engineer}>{engineerName ?? 'поиск...'}</dd>
             </>
           )}
         </dl>
+
+        <OrderActions
+          key={order.id}
+          order={order}
+          variant="popup"
+          onComplete={onComplete}
+          onCancel={onCancel}
+        />
       </div>
     </Popup>
   )

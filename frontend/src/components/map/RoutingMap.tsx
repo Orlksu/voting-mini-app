@@ -1,6 +1,10 @@
 import { LngLatBounds, setWorkerUrl } from 'maplibre-gl'
-import type { ExpressionSpecification, GeoJSONSource } from 'maplibre-gl'
-import type { FeatureCollection, Point } from 'geojson'
+import type {
+  ExpressionSpecification,
+  GeoJSONSource,
+  SymbolLayerSpecification,
+} from 'maplibre-gl'
+import type { FeatureCollection, LineString, Point } from 'geojson'
 import '@fontsource/material-symbols-rounded/400.css'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import type { WorkOrder } from '../../types/workOrder.ts'
@@ -9,6 +13,8 @@ import type { MapLayerMouseEvent, MapRef } from 'react-map-gl/maplibre'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import styles from './RoutingMap.module.css'
 import OrderPopup from './OrderPopup.tsx'
+import type { Depot } from '../../types/depot.ts'
+import type { OfficeRoute } from './officeRoutes.ts'
 
 setWorkerUrl(
   new URL('maplibre-gl/dist/maplibre-gl-worker.mjs', import.meta.url).href,
@@ -22,6 +28,8 @@ const mapStyle = mapTilerApiKey
 const CLUSTER_LAYER_ID = 'work-orders-clusters'
 const POINTS_LAYER_ID = 'work-orders-points'
 const ROUTE_POINTS_LAYER_ID = 'engineer-route-points'
+const OFFICE_POINTS_LAYER_ID = 'office-route-points'
+
 const ORDER_ZOOM_MIN = 15
 const ROUTE_FIT_PADDING = { top: 160, bottom: 80, left: 440, right: 80 }
 const ROUTE_FIT_MAX_ZOOM = 15
@@ -31,6 +39,14 @@ const EMERGENCY_COLOR = '#E5484D'
 const CLUSTER_FILL = '#1B1A1A'
 const CLUSTER_ZOOM_PADDING = { top: 160, bottom: 80, left: 80, right: 80 }
 const CLUSTER_ZOOM_MAX = 16
+
+const stopNumberLayout = {
+  'text-field': ['to-string', ['get', 'sequence']],
+  'text-font': CLUSTER_FONT,
+  'text-size': 12,
+  'text-allow-overlap': true,
+  'text-ignore-placement': true,
+} satisfies SymbolLayerSpecification['layout']
 
 const clusterRadius: ExpressionSpecification = [
   'step',
@@ -110,6 +126,12 @@ interface RoutingMapProps {
   selectedOrderEngineerName?: string | null
   isSelectedOrderEngineerLoading?: boolean
   onOrderSelect?: (externalId: string | null) => void
+  onOrderComplete?: (order: WorkOrder) => Promise<unknown>
+  onOrderCancel?: (order: WorkOrder, reason: string) => Promise<unknown>
+  depots?: Depot[]
+  activeDepotId?: string | null
+  onDepotClick?: (depotId: string) => void
+  officeRoutes?: OfficeRoute[]
 }
 
 function decodePolyline(
@@ -162,10 +184,92 @@ export function RoutingMap({
   selectedOrderEngineerName = null,
   isSelectedOrderEngineerLoading = false,
   onOrderSelect,
+  onOrderComplete,
+  onOrderCancel,
+  depots = [],
+  activeDepotId = null,
+  onDepotClick,
+  officeRoutes = [],
 }: RoutingMapProps) {
   const [zoom, setZoom] = useState(11)
   const [isFeatureHovered, setIsFeatureHovered] = useState(false)
   const mapRef = useRef<MapRef>(null)
+
+  const isOfficeMode = !isEngineerRoute && officeRoutes.length > 0
+  const visibleDepots = depots.filter(
+    (depot) =>
+      isValidLngLat(depot.longitude, depot.latitude) &&
+      (Math.abs(depot.latitude) > 0.0001 || Math.abs(depot.longitude) > 0.0001),
+  )
+  const activeDepot =
+    visibleDepots.find((depot) => depot.id === activeDepotId) ?? null
+
+  const officeGeo = useMemo(() => {
+    const lines: FeatureCollection<LineString> = {
+      type: 'FeatureCollection',
+      features: [],
+    }
+    const points: FeatureCollection<Point> = {
+      type: 'FeatureCollection',
+      features: [],
+    }
+
+    for (const route of officeRoutes) {
+      const coordinates = route.encodedPolyline
+        ? decodeRoutePolyline(route.encodedPolyline, route.startPoint)
+        : []
+      if (coordinates.length > 1) {
+        lines.features.push({
+          type: 'Feature',
+          properties: { color: route.color },
+          geometry: { type: 'LineString', coordinates },
+        })
+      }
+      for (const stop of route.stops) {
+        if (!isValidLngLat(stop.longitude, stop.latitude)) continue
+        points.features.push({
+          type: 'Feature',
+          properties: {
+            externalId: stop.externalId,
+            priority: stop.priority,
+            color: route.color,
+            sequence: stop.sequence,
+          },
+          geometry: {
+            type: 'Point',
+            coordinates: [stop.longitude, stop.latitude],
+          },
+        })
+      }
+    }
+
+    return { lines, points }
+  }, [officeRoutes])
+
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !isOfficeMode) return
+
+    const bounds = new LngLatBounds()
+    for (const feature of officeGeo.lines.features) {
+      for (const coordinate of feature.geometry.coordinates) {
+        bounds.extend(coordinate as [number, number])
+      }
+    }
+    for (const feature of officeGeo.points.features) {
+      bounds.extend(feature.geometry.coordinates as [number, number])
+    }
+    if (activeDepot) {
+      bounds.extend([activeDepot.longitude, activeDepot.latitude])
+    }
+    if (bounds.isEmpty()) return
+
+    map.fitBounds(bounds, {
+      padding: ROUTE_FIT_PADDING,
+      maxZoom: ROUTE_FIT_MAX_ZOOM,
+      duration: 800,
+    })
+  }, [isOfficeMode, officeGeo, activeDepot])
 
   const routeCoordinates = useMemo(
     () =>
@@ -236,7 +340,8 @@ export function RoutingMap({
 
     if (
       feature.layer.id === POINTS_LAYER_ID ||
-      feature.layer.id === ROUTE_POINTS_LAYER_ID
+      feature.layer.id === ROUTE_POINTS_LAYER_ID ||
+      feature.layer.id === OFFICE_POINTS_LAYER_ID
     ) {
       const externalId = feature.properties?.externalId
       if (typeof externalId !== 'string') return
@@ -289,6 +394,7 @@ export function RoutingMap({
         properties: {
           externalId: workOrder.externalId,
           priority: workOrder.priority,
+          sequence: workOrder.sequence ?? null,
         },
         geometry: {
           type: 'Point',
@@ -335,7 +441,9 @@ export function RoutingMap({
         interactiveLayerIds={
           isEngineerRoute
             ? [ROUTE_POINTS_LAYER_ID]
-            : [CLUSTER_LAYER_ID, POINTS_LAYER_ID]
+            : isOfficeMode
+              ? [CLUSTER_LAYER_ID, POINTS_LAYER_ID, OFFICE_POINTS_LAYER_ID]
+              : [CLUSTER_LAYER_ID, POINTS_LAYER_ID]
         }
         onClick={handleMapClick}
         onMouseEnter={() => setIsFeatureHovered(true)}
@@ -378,16 +486,31 @@ export function RoutingMap({
                 id={ROUTE_POINTS_LAYER_ID}
                 type="circle"
                 paint={{
-                  'circle-radius': 10,
+                  'circle-radius': 12,
                   'circle-color': [
                     'match',
                     ['get', 'priority'],
                     'Emergency',
-                    '#B00F19',
-                    '#EABE5F',
+                    EMERGENCY_COLOR,
+                    CLUSTER_COLOR,
                   ],
-                  'circle-stroke-color': '#000000',
+                  'circle-stroke-color': CLUSTER_FILL,
                   'circle-stroke-width': 2,
+                }}
+              />
+              <Layer
+                id="engineer-route-numbers"
+                type="symbol"
+                filter={['has', 'sequence']}
+                layout={stopNumberLayout}
+                paint={{
+                  'text-color': [
+                    'match',
+                    ['get', 'priority'],
+                    'Emergency',
+                    '#FFFFFF',
+                    CLUSTER_FILL,
+                  ],
                 }}
               />
             </Source>
@@ -499,12 +622,96 @@ export function RoutingMap({
             />
           </Source>
         )}
+        {isOfficeMode && (
+          <>
+            <Source
+              id="office-route-lines"
+              type="geojson"
+              data={officeGeo.lines}
+            >
+              <Layer
+                id="office-route-lines"
+                type="line"
+                layout={{ 'line-cap': 'round', 'line-join': 'round' }}
+                paint={{
+                  'line-color': ['get', 'color'],
+                  'line-width': ['step', ['zoom'], 3, 14, 4],
+                  'line-opacity': 0.85,
+                }}
+              />
+            </Source>
+            <Source
+              id="office-route-points"
+              type="geojson"
+              data={officeGeo.points}
+            >
+              <Layer
+                id={OFFICE_POINTS_LAYER_ID}
+                type="circle"
+                paint={{
+                  'circle-radius': ['step', ['zoom'], 6, 13, 8, 15, 10],
+                  'circle-color': ['get', 'color'],
+                  'circle-stroke-color': [
+                    'match',
+                    ['get', 'priority'],
+                    'Emergency',
+                    EMERGENCY_COLOR,
+                    CLUSTER_FILL,
+                  ],
+                  'circle-stroke-width': [
+                    'match',
+                    ['get', 'priority'],
+                    'Emergency',
+                    3,
+                    2,
+                  ],
+                }}
+              />
+              <Layer
+                id="office-route-numbers"
+                type="symbol"
+                minzoom={12}
+                layout={{ ...stopNumberLayout, 'text-size': 11 }}
+                paint={{ 'text-color': CLUSTER_FILL }}
+              />
+            </Source>
+          </>
+        )}
+
+        {(activeDepot ? [activeDepot] : visibleDepots).map((depot) => (
+          <Marker
+            key={depot.id}
+            longitude={depot.longitude}
+            latitude={depot.latitude}
+            anchor="center"
+          >
+            <button
+              type="button"
+              className={`${styles.depotMarker} ${depot.id === activeDepotId ? styles.depotMarkerActive : ''}`}
+              title={`офис ${depot.name}`}
+              aria-label={`Офис ${depot.name}`}
+              onClick={(event) => {
+                event.stopPropagation()
+                onDepotClick?.(depot.id)
+              }}
+            >
+              <span className="material-symbols-rounded">apartment</span>
+            </button>
+          </Marker>
+        ))}
+
         {selectedOrder && (
           <OrderPopup
             order={selectedOrder}
             engineerName={selectedOrderEngineerName}
             isEngineerLoading={isSelectedOrderEngineerLoading}
             onClose={() => onOrderSelect?.(null)}
+            onComplete={(order) =>
+              onOrderComplete ? onOrderComplete(order) : Promise.resolve()
+            }
+            onCancel={(order, reason) =>
+              onOrderCancel ? onOrderCancel(order, reason) : Promise.resolve()
+            }
           />
         )}
         <Layer

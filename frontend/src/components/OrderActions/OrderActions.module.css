@@ -1,0 +1,175 @@
+.buttons {
+  display: flex;
+  gap: 8px;
+
+  button {
+    cursor: pointer;
+    flex: 1;
+    padding: 8px 12px;
+
+    font: inherit;
+    font-size: 15px;
+    white-space: nowrap;
+    border-radius: 20px;
+    transition: opacity 0.2s ease-in-out;
+  }
+
+  button:disabled {
+    cursor: default;
+    opacity: 0.6;
+  }
+}
+
+.complete {
+  color: #0f0f0f;
+  background: #fbb72c;
+  border: none;
+}
+
+.cancel {
+  color: #e5484d;
+  background: transparent;
+  border: 1px solid rgb(229 72 77 / 60%);
+}
+
+.cancelSolid {
+  color: white;
+  background: #e5484d;
+  border: none;
+}
+
+.back {
+  color: #b3b3b3;
+  background: rgba(37, 37, 37, 1);
+  border: none;
+}
+
+.iconButtons {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 6px;
+  margin-left: auto;
+
+  button {
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    padding: 0;
+
+    background: rgba(37, 37, 37, 1);
+    border: 1px solid transparent;
+    border-radius: 50%;
+    transition: 0.2s all ease-in-out;
+
+    span {
+      font-size: 20px;
+    }
+  }
+}
+
+.iconComplete {
+  color: rgb(234 190 95);
+}
+
+.iconComplete:hover {
+  border-color: rgb(234 190 95 / 60%);
+}
+
+.iconCancel {
+  color: #e5484d;
+}
+
+.iconCancel:hover {
+  border-color: rgb(229 72 77 / 60%);
+}
+
+.confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+
+  background: rgba(37, 37, 37, 1);
+  border-radius: 15px;
+  cursor: default;
+}
+
+.row {
+  flex-basis: 100%;
+}
+
+.question {
+  font-size: 16px;
+  color: white;
+}
+
+.note {
+  font-size: 13px;
+  color: rgb(234 190 95);
+}
+
+.reason {
+  width: 100%;
+  padding: 10px 12px;
+  resize: vertical;
+
+  font: inherit;
+  font-size: 15px;
+  color: white;
+  background: #1b1a1a;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  outline: none;
+}
+
+.reason:focus {
+  border-color: rgb(234 190 95 / 60%);
+}
+
+.reason::placeholder {
+  color: #5c5c5c;
+}
+
+.error {
+  font-size: 14px;
+  color: #ff6b6b;
+}
+
+.status {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.status.row {
+  flex-basis: auto;
+  align-items: flex-end;
+  margin-left: auto;
+}
+
+.badge {
+  padding: 3px 12px;
+  font-size: 14px;
+  white-space: nowrap;
+  border-radius: 20px;
+}
+
+.badgeCompleted {
+  color: rgb(234 190 95);
+  border: 1px solid rgb(234 190 95 / 60%);
+}
+
+.badgeCancelled {
+  color: #e5484d;
+  border: 1px solid rgb(229 72 77 / 60%);
+}
+
+.reasonText {
+  max-width: 260px;
+  font-size: 13px;
+  color: #7a7a7a;
+}
