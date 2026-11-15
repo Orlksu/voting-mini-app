@@ -394,20 +394,11 @@ async def cmd_cancel(message: Message, state: FSMContext) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def main() -> None:
-    if not BOT_TOKEN:
-        raise RuntimeError(
-            "BOT_TOKEN is not set. Copy .env.example to .env and fill BOT_TOKEN."
-        )
 
-    # Create the SQLite schema and the demo agenda on first launch.
-    await asyncio.to_thread(seed_default_data)
-    if ADMIN_TG_ID is not None:
-        promoted = await asyncio.to_thread(
-            promote_bootstrap_admin, ADMIN_TG_ID
-        )
-        if promoted:
-            logger.info("Bootstrap admin role assigned to %s", ADMIN_TG_ID)
+async def run_bot() -> None:
+    """Run Telegram polling in the current event loop."""
+    if not BOT_TOKEN:
+        raise RuntimeError("BOT_TOKEN is not set.")
 
     bot = Bot(
         token=BOT_TOKEN,
@@ -418,7 +409,7 @@ async def main() -> None:
             [
                 BotCommand(command="start", description="Открыть Mini App"),
                 BotCommand(command="admin", description="Панель администратора"),
-                BotCommand(command="invite", description="Ссылка-приглашение"),
+                BotCommand(command="invite", description="Пригласительная ссылка"),
                 BotCommand(command="cancel", description="Отменить регистрацию"),
             ]
         )
@@ -427,6 +418,21 @@ async def main() -> None:
         await dp.start_polling(bot)
     finally:
         await bot.session.close()
+
+
+async def main() -> None:
+    if not BOT_TOKEN:
+        raise RuntimeError("BOT_TOKEN is not set.")
+
+    await asyncio.to_thread(seed_default_data)
+    if ADMIN_TG_ID is not None:
+        promoted = await asyncio.to_thread(
+            promote_bootstrap_admin, ADMIN_TG_ID
+        )
+        if promoted:
+            logger.info("Bootstrap admin role assigned to %s", ADMIN_TG_ID)
+
+    await run_bot()
 
 
 if __name__ == "__main__":

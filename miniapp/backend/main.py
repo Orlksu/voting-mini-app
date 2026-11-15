@@ -664,7 +664,27 @@ async def lifespan(_app: FastAPI):
         )
         if promoted:
             logger.info("Bootstrap admin role assigned to %s", ADMIN_TG_ID)
+
+    bot_task: asyncio.Task[None] | None = None
+    if os.getenv("RUN_BOT_IN_API", "0") == "1":
+        try:
+            from bot import run_bot
+
+            bot_task = asyncio.create_task(run_bot())
+            logger.info("Telegram bot started in the API process")
+        except Exception:
+            logger.exception("Failed to start Telegram bot in the API process")
+
     yield
+
+    if bot_task is not None:
+        bot_task.cancel()
+        try:
+            await bot_task
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            logger.exception("Telegram bot stopped with an error")
 
 
 app = FastAPI(

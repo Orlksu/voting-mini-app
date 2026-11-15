@@ -284,6 +284,7 @@ uvicorn main:app --host 0.0.0.0 --port $PORT
 - `DATABASE_URL` — строка подключения к БД. Для Render Postgres/SQLite укажите значение хостинга.
 - `MINIAPP_URL` — публичный HTTPS-адрес Mini App.
 - `DEV_MODE=0` — обязательно выключить в production.
+- `RUN_BOT_IN_API=1` — на Render, чтобы бот работал в том же процессе, что и API.
 - `INVITE_CODE` — код или коды через запятую.
 - `INIT_DATA_TTL_SECONDS=86400`.
 - `EVENT_TITLE`, `EVENT_DATE`, `EVENT_TIME`, `EVENT_PLACE` — значения по умолчанию.
