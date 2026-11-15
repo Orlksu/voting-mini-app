@@ -260,15 +260,24 @@ function apiErrorMessage(error) {
 
 async function canUseApi() {
   if (runtime.forceDemo) return false;
-  try {
-    const response = await fetch(apiUrl('/api/healthz'), {
-      headers: { Accept: 'application/json' },
-      signal: AbortSignal.timeout ? AbortSignal.timeout(2500) : undefined,
-    });
-    return response.ok;
-  } catch (error) {
-    return false;
+  // Render and other free hosts can need more than a couple of seconds to wake
+  // up. A single very short check made the app fall back to demo mode even
+  // when the backend was only cold-starting.
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const response = await fetch(apiUrl('/api/healthz'), {
+        headers: { Accept: 'application/json' },
+        signal: AbortSignal.timeout ? AbortSignal.timeout(8000) : undefined,
+      });
+      if (response.ok) return true;
+    } catch (error) {
+      // Retry once after a short pause before deciding that the backend is down.
+    }
+    if (attempt === 0) {
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+    }
   }
+  return false;
 }
 
 function mapApiVoting(voting) {
