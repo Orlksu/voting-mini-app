@@ -324,6 +324,7 @@ def validate_init_data(init_data: str) -> TelegramUser:
     hash = HMAC_SHA256(secret_key, data_check_string)
     """
     if not init_data:
+        logger.warning("Telegram initData is empty")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Telegram initData is required",
@@ -339,6 +340,7 @@ def validate_init_data(init_data: str) -> TelegramUser:
     data = dict(pairs)
     received_hash = data.pop("hash", None)
     if not received_hash:
+        logger.warning("Telegram initData has no hash")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Telegram initData has no hash",
@@ -355,6 +357,7 @@ def validate_init_data(init_data: str) -> TelegramUser:
     ).hexdigest()
 
     if not hmac.compare_digest(calculated_hash, received_hash):
+        logger.warning("Telegram initData signature is invalid")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Telegram initData signature is invalid",
@@ -395,6 +398,7 @@ def validate_init_data(init_data: str) -> TelegramUser:
     try:
         payload = json.loads(raw_user)
         tg_user = TelegramUser.model_validate(payload)
+        logger.info("Telegram initData validated for user %s", tg_user.id)
     except (json.JSONDecodeError, ValueError) as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -450,6 +454,13 @@ def get_current_user(
     dev_user_id: Annotated[int | None, Query(alias="dev_user_id")] = None,
     session: Session = Depends(get_db),
 ) -> CurrentUser:
+    logger.info(
+        "Auth request: initData present=%s, length=%s, dev_user_id=%s, dev_mode=%s",
+        bool(x_telegram_init_data),
+        len(x_telegram_init_data or ""),
+        dev_user_id,
+        DEV_MODE,
+    )
     if x_telegram_init_data:
         telegram_user = validate_init_data(x_telegram_init_data)
         telegram_id = telegram_user.id
