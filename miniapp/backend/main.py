@@ -667,13 +667,20 @@ async def lifespan(_app: FastAPI):
 
     bot_task: asyncio.Task[None] | None = None
     if os.getenv("RUN_BOT_IN_API", "0") == "1":
-        try:
-            from bot import run_bot
 
-            bot_task = asyncio.create_task(run_bot())
-            logger.info("Telegram bot started in the API process")
+        async def _run_bot() -> None:
+            try:
+                from bot import run_bot as run_telegram_bot
+
+                await run_telegram_bot()
+            except Exception:
+                logger.exception("Telegram bot stopped with an error")
+
+        try:
+            bot_task = asyncio.create_task(_run_bot())
+            logger.info("Telegram bot task created in the API process")
         except Exception:
-            logger.exception("Failed to start Telegram bot in the API process")
+            logger.exception("Failed to create Telegram bot task")
 
     yield
 
