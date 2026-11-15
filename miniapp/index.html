@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#08090c" />
+  <meta name="description" content="Совет Старост — прототип Telegram Mini App для голосования на заседаниях" />
+  <title>Совет Старост — голосование</title>
+  <link rel="icon" type="image/png" href="assets/logo.png" />
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="admin.css" />
+  <link rel="stylesheet" href="screen.css" />
+</head>
+<body data-mode="participant">
+  <div class="ambient" aria-hidden="true">
+    <span class="ambient__orb ambient__orb--one"></span>
+    <span class="ambient__orb ambient__orb--two"></span>
+    <span class="ambient__grid"></span>
+  </div>
+
+  <div class="demo-switch" role="group" aria-label="Режим прототипа">
+    <span class="demo-switch__label"><i></i> <span data-connection-label>Демо</span></span>
+    <div class="demo-seg">
+      <button type="button" data-action="set-mode" data-mode="admin" aria-label="Режим администратора">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1.03 1.56V21a2 2 0 1 1-4 0v-.09A1.7 1.7 0 0 0 8.96 19.4a1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.56-1.03H3a2 2 0 1 1 0-4h.09A1.7 1.7 0 0 0 4.6 8.96a1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 8.96 4.6 1.7 1.7 0 0 0 10 3.04V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1.03 1.56 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 8.96c.26.63.87 1.04 1.56 1.04H21a2 2 0 1 1 0 4h-.09A1.7 1.7 0 0 0 19.4 15Z"/></svg>
+        <span>Админ</span>
+      </button>
+      <button type="button" data-action="set-mode" data-mode="participant" aria-label="Режим участника">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>
+        <span>Участник</span>
+      </button>
+      <button type="button" data-action="set-mode" data-mode="screen" aria-label="Экран зала">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+        <span>Экран</span>
+      </button>
+    </div>
+    <button type="button" class="demo-reset" data-action="reset-demo" title="Сбросить демо" aria-label="Сбросить демо">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg>
+    </button>
+  </div>
+
+  <main>
+    <section id="view-participant" class="view" aria-label="Экран участника"></section>
+    <section id="view-admin" class="view" aria-label="Панель администратора"></section>
+    <section id="view-screen" class="view" aria-label="Экран зала"></section>
+  </main>
+
+  <div class="modal" id="new-event-modal" hidden>
+    <div class="modal__backdrop" data-action="close-modal"></div>
+    <div class="modal__dialog" role="dialog" aria-modal="true" aria-labelledby="new-event-title">
+      <header class="modal__head">
+        <div>
+          <span class="eyebrow">Панель администратора</span>
+          <h2 id="new-event-title">Новое мероприятие</h2>
+        </div>
+        <button type="button" class="icon-btn" data-action="close-modal" aria-label="Закрыть">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+        </button>
+      </header>
+      <form id="new-event-form" class="modal__form">
+        <label class="field field--full">
+          <span>Название мероприятия</span>
+          <input name="title" maxlength="120" required placeholder="Заседание Совета старост" />
+        </label>
+        <div class="field-grid">
+          <label class="field">
+            <span>Дата</span>
+            <input type="date" name="date" required />
+          </label>
+          <label class="field">
+            <span>День недели</span>
+            <input id="new-event-weekday" readonly aria-readonly="true" />
+          </label>
+          <label class="field">
+            <span>Время</span>
+            <input type="time" name="time" value="17:00" required />
+          </label>
+          <label class="field">
+            <span>Место</span>
+            <input name="place" maxlength="120" required placeholder="Зал Учёного совета" />
+          </label>
+        </div>
+        <p class="modal__hint">После создания мероприятия вы сможете сформировать повестку и добавить вопросы для голосования.</p>
+        <div class="modal__actions">
+          <button type="button" class="btn btn--ghost" data-action="close-modal">Отмена</button>
+          <button type="submit" class="btn btn--primary">Создать мероприятие</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>

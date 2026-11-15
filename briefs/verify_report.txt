@@ -1,0 +1,6 @@
+Бриф_Клепинин_Сила_В_Единстве.pdf: страниц 2, размер 841.9x595.0, шрифты AAAAAA+Montserrat-SemiBold, BAAAAA+Montserrat-Regular, CAAAAA+Montserrat-ExtraBold, DAAAAA+Montserrat-SemiBold650, EAAAAA+Montserrat-Bold, FAAAAA+Montserrat-Bold720, изображений 2, текст 1-й стр. 2310 симв.
+Бриф_Колодкин_Сила_В_Единстве.pdf: страниц 2, размер 841.9x595.0, шрифты AAAAAA+Montserrat-SemiBold, BAAAAA+Montserrat-Regular, CAAAAA+Montserrat-ExtraBold, DAAAAA+Montserrat-SemiBold650, EAAAAA+Montserrat-Bold, FAAAAA+Montserrat-Bold720, изображений 2, текст 1-й стр. 2310 симв.
+Бриф_Комиссаров_Сила_В_Единстве.pdf: страниц 2, размер 841.9x595.0, шрифты AAAAAA+Montserrat-SemiBold, BAAAAA+Montserrat-Regular, CAAAAA+Montserrat-ExtraBold, DAAAAA+Montserrat-SemiBold650, EAAAAA+Montserrat-Bold, FAAAAA+Montserrat-Bold720, изображений 2, текст 1-й стр. 2310 симв.
+Бриф_Спирин_Сила_В_Единстве.pdf: страниц 2, размер 841.9x595.0, шрифты AAAAAA+Montserrat-SemiBold, BAAAAA+Montserrat-Regular, CAAAAA+Montserrat-ExtraBold, DAAAAA+Montserrat-SemiBold650, EAAAAA+Montserrat-Bold, FAAAAA+Montserrat-Bold720, изображений 2, текст 1-й стр. 2310 симв.
+
+Первые страницы идентичны: True
