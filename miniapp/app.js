@@ -263,6 +263,8 @@ function apiErrorMessage(error) {
     'A voting must keep at least two options': 'В вопросе должно остаться минимум два варианта.',
     'Voting options cannot be changed while voting is open': 'Варианты нельзя менять, пока идёт голосование.',
     'Voting needs at least two options': 'Добавьте минимум два варианта ответа.',
+    'Attendance response is already confirmed': 'Ответ уже подтверждён. Изменить его нельзя.',
+    'Participant must confirm attendance before voting': 'Сначала подтвердите присутствие на заседании.',
   };
   return messages[detail] || detail;
 }
@@ -363,7 +365,11 @@ async function loadApiState() {
   runtime.me = me;
   runtime.authError = null;
   enforceRoleMode();
-  state.participant.rsvp = me.will_attend ? 'yes' : 'no';
+  state.participant.rsvpConfirmed = Boolean(me.rsvp_confirmed);
+  state.participant.rsvp = state.participant.rsvpConfirmed
+    ? (me.will_attend ? 'yes' : 'no')
+    : null;
+  state.participant.rsvpDraft = state.participant.rsvp;
 
   const event = await apiRequest('/api/event');
   applyEvent(event);
@@ -546,7 +552,9 @@ function makeDefaultState() {
       votedPollId: null,
       choiceId: null,
       votedAt: null,
-      rsvp: 'yes',
+      rsvp: null,
+      rsvpDraft: null,
+      rsvpConfirmed: false,
       selectedId: null,
     },
     registered: PEOPLE.length - 1,
@@ -573,6 +581,26 @@ function loadState() {
       event: { ...base.event, ...(saved.event || {}) },
       participant: { ...base.participant, ...(saved.participant || {}) },
     };
+    // Older demo saves kept only ``rsvp``.  They predate the explicit
+    // confirmation step, so ask the participant once instead of silently
+    // treating the old value as confirmed.
+    if (typeof merged.participant.rsvpConfirmed !== 'boolean') {
+      merged.participant.rsvpConfirmed = false;
+      merged.participant.rsvp = null;
+      merged.participant.rsvpDraft = null;
+    } else if (merged.participant.rsvpConfirmed) {
+      if (!['yes', 'no'].includes(merged.participant.rsvp)) {
+        merged.participant.rsvp = ['yes', 'no'].includes(merged.participant.rsvpDraft)
+          ? merged.participant.rsvpDraft
+          : null;
+      }
+      merged.participant.rsvpDraft = merged.participant.rsvp;
+    } else {
+      merged.participant.rsvp = null;
+      if (!['yes', 'no'].includes(merged.participant.rsvpDraft)) {
+        merged.participant.rsvpDraft = null;
+      }
+    }
     if (!Array.isArray(merged.polls) || merged.polls.length === 0) merged.polls = base.polls;
     merged.adminIndexes = Array.isArray(merged.adminIndexes)
       ? merged.adminIndexes.filter((index) => Number.isInteger(index) && index >= 0 && index < PEOPLE.length)
@@ -616,7 +644,11 @@ function save() {
       ? {
           mode: state.mode,
           activePollId: state.activePollId,
-          participant: { rsvp: state.participant.rsvp },
+          participant: {
+            rsvp: state.participant.rsvp,
+            rsvpDraft: state.participant.rsvpDraft,
+            rsvpConfirmed: state.participant.rsvpConfirmed,
+          },
           adminSearch: state.adminSearch,
           adminFilter: state.adminFilter,
           previewTab: state.previewTab,
@@ -723,6 +755,10 @@ function participantHero(poll) {
   const total = totalVotes(poll);
   const meta = statusMeta(poll);
   const people = state.registered;
+  const answered = state.participant.rsvpConfirmed;
+  const selectedRsvp = answered ? state.participant.rsvp : state.participant.rsvpDraft;
+  const yesSelected = selectedRsvp === 'yes';
+  const noSelected = selectedRsvp === 'no';
   return `
     <section class="mini-hero">
       <span class="mini-hero__grid" aria-hidden="true"></span>
@@ -737,10 +773,25 @@ function participantHero(poll) {
         <span>${icon('calendar')}${esc(dateRu(state.event.date))}, ${esc(weekdayRu(state.event.date))}</span>
         <span>${icon('clock')}${esc(state.event.time)} МСК · ${icon('pin')}${esc(state.event.place)}</span>
       </div>
-      <div class="mini-hero__foot">
-        <button type="button" class="rsvp-pill" data-action="toggle-rsvp">
-          ${icon('checkCircle')} ${state.participant.rsvp === 'yes' ? 'Вы придёте' : 'Вы не сможете'}: <b>${state.participant.rsvp === 'yes' ? 'Буду' : 'Не смогу'}</b>
-        </button>
+      <div class="mini-hero__foot mini-hero__foot--rsvp">
+        <div class="rsvp-card">
+          <div class="rsvp-card__top">
+            <span class="rsvp-card__eyebrow">${icon('users')}Присутствие</span>
+            ${answered ? `<span class="rsvp-card__locked">${icon('lock')}Ответ подтверждён</span>` : ''}
+          </div>
+          <h3>Будете ли вы присутствовать?</h3>
+          <div class="rsvp-card__choices">
+            <button type="button" class="rsvp-choice rsvp-choice--yes${yesSelected ? ' is-selected' : ''}" data-action="select-rsvp" data-rsvp="yes" ${answered ? 'disabled' : ''}>
+              ${icon('check')}Да
+            </button>
+            <button type="button" class="rsvp-choice rsvp-choice--no${noSelected ? ' is-selected' : ''}" data-action="select-rsvp" data-rsvp="no" ${answered ? 'disabled' : ''}>
+              ${icon('close')}Нет
+            </button>
+          </div>
+          ${answered
+            ? `<div class="rsvp-card__confirmed">${icon('lock')}Ваш ответ: <b>${state.participant.rsvp === 'yes' ? 'Да' : 'Нет'}</b>. Изменить его нельзя.</div>`
+            : `<button type="button" class="btn btn--primary btn--wide rsvp-card__confirm" data-action="confirm-rsvp" ${selectedRsvp ? '' : 'disabled'}>${icon('check')}Подтвердить ответ</button>`}
+        </div>
         <span class="mini-hero__people">${icon('users')}${people} ${plural(people, 'участник', 'участника', 'участников')} · ${total} ${plural(total, 'голос', 'голоса', 'голосов')}</span>
       </div>
     </section>`;
@@ -822,12 +873,22 @@ function participantVoteBlock() {
       </div>`;
   }
 
-  if (state.participant.rsvp !== 'yes') {
+  if (!state.participant.rsvpConfirmed) {
+    return `
+      <div class="state-card state-card--wait">
+        <div class="state-icon">${icon('users')}</div>
+        <h3>Подтвердите присутствие</h3>
+        <p>Ответьте на вопрос «Будете ли вы присутствовать?» в карточке заседания. После подтверждения ответ изменить нельзя.</p>
+        <div class="state-meta">${icon('info')}Вопрос ${pad(pollIndex(poll))} из ${pad(state.polls.length)} · ${esc(poll.title)}</div>
+      </div>`;
+  }
+
+  if (state.participant.rsvp === 'no') {
     return `
       <div class="state-card state-card--wait">
         <div class="state-icon">${icon('users')}</div>
         <h3>Вы не сможете присутствовать</h3>
-        <p>Вы отметили, что не сможете прийти на заседание. Голосование недоступно; повестка ниже отображается для ознакомления.</p>
+        <p>Вы подтвердили, что не сможете прийти на заседание. Голосование недоступно; повестка ниже отображается для ознакомления.</p>
         <div class="state-meta">${icon('info')}Вопрос ${pad(pollIndex(poll))} из ${pad(state.polls.length)} · ${esc(poll.title)}</div>
       </div>`;
   }
@@ -1703,6 +1764,10 @@ async function castVote() {
     toast('Голосование сейчас недоступно.');
     return;
   }
+  if (!state.participant.rsvpConfirmed) {
+    toast('Сначала подтвердите присутствие на заседании.');
+    return;
+  }
   if (state.participant.rsvp !== 'yes') {
     toast('Вы отметили, что не сможете присутствовать на заседании.');
     return;
@@ -2212,31 +2277,58 @@ document.addEventListener('click', async (event) => {
     await castVote();
     return;
   }
-  if (action === 'toggle-rsvp') {
-    const next = state.participant.rsvp === 'yes' ? 'no' : 'yes';
+  if (action === 'select-rsvp') {
+    if (state.participant.rsvpConfirmed) return;
+    const choice = actionEl.dataset.rsvp;
+    if (choice !== 'yes' && choice !== 'no') return;
+    state.participant.rsvpDraft = choice;
+    save();
+    rerenderParticipantPreserveScroll();
+    return;
+  }
+  if (action === 'confirm-rsvp') {
+    if (state.participant.rsvpConfirmed) return;
+    const choice = state.participant.rsvpDraft;
+    if (choice !== 'yes' && choice !== 'no') {
+      toast('Выберите «Да» или «Нет».');
+      return;
+    }
+
     if (runtime.api) {
       try {
         const me = await apiRequest('/api/me/rsvp', {
           method: 'PATCH',
-          body: { will_attend: next === 'yes' },
+          body: { will_attend: choice === 'yes' },
         });
         runtime.me = me;
-        state.participant.rsvp = me.will_attend ? 'yes' : 'no';
+        state.participant.rsvpConfirmed = Boolean(me.rsvp_confirmed);
+        state.participant.rsvp = me.rsvp_confirmed
+          ? (me.will_attend ? 'yes' : 'no')
+          : null;
+        state.participant.rsvpDraft = state.participant.rsvp;
         await refreshApi({ silent: true });
         renderAll();
         applyMode();
-        toast(state.participant.rsvp === 'yes' ? 'Отметили, что вы будете на заседании.' : 'Отметили, что вы не сможете прийти.');
+        toast('Ответ подтверждён. Изменить его нельзя.');
       } catch (error) {
+        if (error.status === 409) {
+          await refreshApi({ silent: true });
+          renderAll();
+          applyMode();
+        }
         toast(apiErrorMessage(error));
       }
       return;
     }
-    state.participant.rsvp = next;
-    if (next === 'yes') state.present = Math.min(state.registered, state.present + 1);
-    else state.present = Math.max(0, state.present - 1);
+
+    state.participant.rsvpConfirmed = true;
+    state.participant.rsvp = choice;
+    state.participant.rsvpDraft = choice;
+    if (choice === 'no') state.present = Math.max(0, state.present - 1);
     save();
-    rerenderParticipantPreserveScroll();
-    toast(state.participant.rsvp === 'yes' ? 'Отметили, что вы будете на заседании.' : 'Отметили, что вы не сможете прийти.');
+    renderParticipant();
+    applyMode();
+    toast('Ответ подтверждён. Изменить его нельзя.');
     return;
   }
   if (action === 'scroll') {
