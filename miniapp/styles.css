@@ -335,6 +335,10 @@ svg {
 }
 
 /* Demo mode switch */
+.demo-switch[hidden],
+.demo-seg button[hidden] {
+  display: none !important;
+}
 .demo-switch {
   position: fixed;
   top: 16px;
