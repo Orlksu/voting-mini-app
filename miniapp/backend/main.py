@@ -1128,19 +1128,6 @@ def delete_voting(
     session: Session = Depends(get_db),
 ) -> None:
     voting = get_voting_or_404(session, voting_id)
-
-    if voting.status != VotingStatus.WAITING.value:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Only a waiting voting can be deleted",
-        )
-
-    if voting.votes:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="A voting with votes cannot be deleted",
-        )
-
     session.delete(voting)
     session.commit()
 
@@ -1283,10 +1270,10 @@ def reopen_voting(
 
 
 def _ensure_voting_editable(voting: Voting) -> None:
-    if voting.status != VotingStatus.WAITING.value:
+    if voting.status == VotingStatus.OPEN.value:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Voting can only be edited while it is waiting",
+            detail="Voting options cannot be changed while voting is open",
         )
 
 
@@ -1374,11 +1361,8 @@ def delete_option(
             detail="A voting must keep at least two options",
         )
 
-    if option.votes:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Option already has votes",
-        )
+    for vote in list(option.votes):
+        session.delete(vote)
 
     session.delete(option)
     session.commit()

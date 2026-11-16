@@ -172,6 +172,17 @@ function isEditing() {
   const el = document.activeElement;
   return Boolean(el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT'));
 }
+function isAdminUser() {
+  return Boolean(runtime.api && runtime.me && runtime.me.is_admin);
+}
+function enforceRoleMode() {
+  if (!runtime.api || !runtime.me) return;
+  if (runtime.me.is_admin) {
+    if (state.mode === 'participant') state.mode = 'admin';
+    return;
+  }
+  state.mode = 'participant';
+}
 function toast(message) {
   const el = document.getElementById('toast');
   if (!el) return;
@@ -250,9 +261,7 @@ function apiErrorMessage(error) {
     'You have already voted in this voting': 'Вы уже проголосовали по этому вопросу.',
     'Cannot demote the last administrator': 'В системе должен остаться хотя бы один администратор.',
     'A voting must keep at least two options': 'В вопросе должно остаться минимум два варианта.',
-    'Voting can only be edited while it is waiting': 'Редактировать можно только вопрос, ожидающий запуска.',
-    'Only a waiting voting can be deleted': 'Удалить можно только вопрос, ожидающий запуска.',
-    'Option already has votes': 'Нельзя удалить вариант, за который уже голосовали.',
+    'Voting options cannot be changed while voting is open': 'Варианты нельзя менять, пока идёт голосование.',
     'Voting needs at least two options': 'Добавьте минимум два варианта ответа.',
   };
   return messages[detail] || detail;
@@ -340,13 +349,6 @@ function mergeLivePoll(live) {
 }
 
 async function loadApiState() {
-  // The projector screen is public, so it must not probe /api/me on every
-  // refresh: a 401 there is expected but pollutes the browser console.
-  if (state.mode === 'screen') {
-    await loadPublicScreenState();
-    return;
-  }
-
   let me;
   try {
     me = await apiRequest('/api/me');
@@ -354,16 +356,13 @@ async function loadApiState() {
     if (error.status === 401 || error.status === 403) {
       runtime.me = null;
       runtime.authError = error;
-      if (state.mode === 'screen') {
-        await loadPublicScreenState();
-        return;
-      }
     }
     throw error;
   }
 
   runtime.me = me;
   runtime.authError = null;
+  enforceRoleMode();
   state.participant.rsvp = me.will_attend ? 'yes' : 'no';
 
   const event = await apiRequest('/api/event');
@@ -458,16 +457,25 @@ function applyRuntimeUi() {
       : 'Локальный демонстрационный режим';
   }
 
+  const admin = isAdminUser();
+  const participantAllowed = !runtime.api || !admin;
+  const adminAllowed = !runtime.api || admin;
+
+  document.querySelectorAll('.demo-seg [data-mode="participant"]').forEach((button) => {
+    button.hidden = !participantAllowed;
+    button.disabled = !participantAllowed;
+  });
   document.querySelectorAll('.demo-seg [data-mode="admin"]').forEach((button) => {
-    const allowed = !runtime.api || Boolean(runtime.me && runtime.me.is_admin);
-    button.hidden = !allowed;
-    button.disabled = !allowed;
+    button.hidden = !adminAllowed;
+    button.disabled = !adminAllowed;
   });
   document.querySelectorAll('.demo-seg [data-mode="screen"]').forEach((button) => {
-    const allowed = !runtime.api || Boolean(runtime.me && runtime.me.is_admin);
-    button.hidden = !allowed;
-    button.disabled = !allowed;
+    button.hidden = !adminAllowed;
+    button.disabled = !adminAllowed;
   });
+
+  const modeSwitch = document.querySelector('.demo-switch');
+  if (modeSwitch) modeSwitch.hidden = runtime.api && Boolean(runtime.me) && !admin;
 
   const reset = document.querySelector('[data-action="reset-demo"]');
   if (reset) {
@@ -1001,7 +1009,6 @@ function eventPanelMarkup() {
         </div>
         <div class="event-form__actions">
           <button type="button" class="btn btn--primary btn--sm" data-action="save-event">${icon('check')}Сохранить</button>
-          <button type="button" class="btn btn--ghost btn--sm" data-action="new-event">${icon('plus')}Новое</button>
         </div>
         <div class="event-form__meta">${icon('checkCircle')}${runtime.api ? 'Изменения применяются после нажатия «Сохранить»' : 'Изменения сохраняются в браузере'}</div>
       </form>
@@ -1012,7 +1019,6 @@ function agendaPanelMarkup() {
   const rows = state.polls.map((poll, index) => {
     const isActive = poll.id === activePoll().id;
     const meta = statusMeta(poll);
-    const canDelete = !runtime.api || poll.status === 'waiting';
     return `
       <div class="agenda-row ${isActive ? 'active' : ''}" data-action="select-poll" data-poll="${esc(poll.id)}" role="button" tabindex="0">
         <span class="agenda-row__num">${pad(index + 1)}</span>
@@ -1021,7 +1027,7 @@ function agendaPanelMarkup() {
           <small>${poll.options.length} ${plural(poll.options.length, 'вариант', 'варианта', 'вариантов')} · ${meta.label}</small>
         </span>
         <span class="agenda-row__state">${statusBadge(poll)}</span>
-        <button type="button" class="agenda-row__del" data-action="remove-poll" data-poll="${esc(poll.id)}" aria-label="Удалить вопрос" title="${canDelete ? 'Удалить вопрос' : 'Удалить можно только вопрос, ожидающий запуска'}" ${canDelete ? '' : 'disabled'}>${icon('trash')}</button>
+        <button type="button" class="agenda-row__del" data-action="remove-poll" data-poll="${esc(poll.id)}" aria-label="Удалить вопрос" title="Удалить вопрос из повестки">${icon('trash')}</button>
       </div>`;
   }).join('');
   return `
@@ -1039,14 +1045,14 @@ function pollEditorMarkup() {
   const poll = activePoll();
   const total = totalVotes(poll);
   const meta = statusMeta(poll);
-  const editable = poll.status === 'waiting' || !runtime.api;
+  const editable = poll.status !== 'open' || !runtime.api;
 
   const options = poll.options.map((option) => `
     <div class="option-row">
       <span class="option-row__drag" aria-hidden="true">${icon('grip')}</span>
       <input value="${esc(option.label)}" maxlength="80" data-bind="option.label" data-poll="${esc(poll.id)}" data-option="${esc(option.id)}" aria-label="Вариант ответа" ${editable ? '' : 'readonly'} />
       ${poll.status === 'waiting' ? '' : `<span class="option-row__count">${option.count}</span>`}
-      <button type="button" class="option-row__remove" data-action="remove-option" data-poll="${esc(poll.id)}" data-option="${esc(option.id)}" aria-label="Удалить вариант" title="${editable ? 'Удалить вариант' : 'Варианты нельзя менять после запуска'}" ${editable ? '' : 'disabled'}>${icon('trash')}</button>
+      <button type="button" class="option-row__remove" data-action="remove-option" data-poll="${esc(poll.id)}" data-option="${esc(option.id)}" aria-label="Удалить вариант" title="${editable ? 'Удалить вариант' : 'Варианты нельзя менять, пока идёт голосование'}" ${editable ? '' : 'disabled'}>${icon('trash')}</button>
     </div>`).join('');
 
   let actions = '';
@@ -1636,9 +1642,16 @@ function applyMode() {
 
 function setMode(mode) {
   if (!['admin', 'participant', 'screen'].includes(mode)) return;
-  if (runtime.api && mode === 'admin' && (!runtime.me || !runtime.me.is_admin)) {
-    toast('Эта панель доступна только администратору.');
-    return;
+  if (runtime.api) {
+    const admin = isAdminUser();
+    if ((mode === 'admin' || mode === 'screen') && !admin) {
+      toast(mode === 'screen' ? 'Экран зала доступен только администратору.' : 'Эта панель доступна только администратору.');
+      return;
+    }
+    if (mode === 'participant' && admin) {
+      toast('Администратору доступна панель администратора.');
+      return;
+    }
   }
   if (runtime.api && mode === 'participant') {
     const open = state.polls.find((poll) => poll.status === 'open');
@@ -1892,17 +1905,14 @@ async function addPoll() {
 }
 
 async function removePoll(id) {
-  if (state.polls.length <= 1) {
-    toast('В повестке должен остаться хотя бы один вопрос.');
-    return;
-  }
   const poll = pollById(id);
   if (!poll) return;
-  if (runtime.api && poll.status !== 'waiting') {
-    toast('Удалить можно только вопрос, ожидающий запуска.');
-    return;
-  }
-  if (!window.confirm(`Удалить вопрос «${poll.title}» из повестки?`)) return;
+  const suffix = poll.status === 'open'
+    ? ' Голосование по нему сейчас идёт.'
+    : totalVotes(poll) > 0
+      ? ' Все голоса по этому вопросу тоже будут удалены.'
+      : '';
+  if (!window.confirm(`Удалить вопрос «${poll.title}» из повестки?${suffix}`)) return;
 
   if (runtime.api) {
     try {
@@ -1921,7 +1931,7 @@ async function removePoll(id) {
 
   state.polls = state.polls.filter((item) => item.id !== id);
   if (!state.polls.some((item) => item.id === state.activePollId)) {
-    state.activePollId = state.polls[0].id;
+    state.activePollId = state.polls[0] ? state.polls[0].id : null;
   }
   state.participant.selectedId = null;
   save();
@@ -1932,8 +1942,8 @@ async function removePoll(id) {
 async function addOption() {
   const poll = activePoll();
   if (!poll || poll.id === 'empty') return;
-  if (runtime.api && poll.status !== 'waiting') {
-    toast('Варианты можно менять только до запуска голосования.');
+  if (runtime.api && poll.status === 'open') {
+    toast('Варианты нельзя менять, пока идёт голосование.');
     return;
   }
 
@@ -1968,12 +1978,11 @@ async function removeOption(pollId, optionId) {
   }
   const option = poll.options.find((item) => item.id === optionId);
   if (!option) return;
-  if (runtime.api && poll.status !== 'waiting') {
-    toast('Варианты можно менять только до запуска голосования.');
+  if (runtime.api && poll.status === 'open') {
+    toast('Варианты нельзя менять, пока идёт голосование.');
     return;
   }
-  if (poll.status !== 'waiting' && option.count > 0) {
-    toast('Нельзя удалить вариант, за который уже голосовали.');
+  if (option.count > 0 && !window.confirm(`У варианта «${option.label}» уже ${option.count} ${plural(option.count, 'голос', 'голоса', 'голосов')}. Удалить вариант вместе с этими голосами?`)) {
     return;
   }
 
@@ -2421,7 +2430,7 @@ document.addEventListener('input', (event) => {
       const poll = pollById(input.dataset.poll) || activePoll();
       if (poll) {
         poll.title = input.value;
-        if (runtime.api && poll.status === 'waiting' && poll.id !== 'empty' && poll.title.trim()) {
+        if (runtime.api && poll.status !== 'open' && poll.id !== 'empty' && poll.title.trim()) {
           const pollId = poll.id;
           scheduleApiSave(`poll-${pollId}`, () => {
             const current = pollById(pollId);
@@ -2439,7 +2448,7 @@ document.addEventListener('input', (event) => {
       const option = poll && poll.options.find((item) => item.id === input.dataset.option);
       if (option) {
         option.label = input.value;
-        if (runtime.api && poll && poll.status === 'waiting' && option.id && option.label.trim()) {
+        if (runtime.api && poll && poll.status !== 'open' && option.id && option.label.trim()) {
           const optionId = option.id;
           scheduleApiSave(`option-${optionId}`, () => {
             const currentPoll = pollById(input.dataset.poll) || activePoll();
@@ -2573,9 +2582,7 @@ async function refreshTick() {
   }
   if (runtime.refreshing) return;
   await refreshApi({ silent: true });
-  if (runtime.api && state.mode === 'admin' && (!runtime.me || !runtime.me.is_admin)) {
-    state.mode = 'participant';
-  }
+  enforceRoleMode();
   applyRuntimeUi();
   renderCurrentMode();
 }
@@ -2592,16 +2599,13 @@ async function initApp() {
   runtime.api = true;
   try {
     await loadApiState();
-    if (!runtime.me && state.mode !== 'screen') {
+    if (!runtime.me) {
       runtime.api = false;
       runtime.authError = new Error('Telegram authorization is required');
       toast('Открой мини-приложение через Telegram. Для локальной проверки добавь ?dev_user_id=<id>.');
       return;
     }
-    if (runtime.api && state.mode === 'admin' && (!runtime.me || !runtime.me.is_admin)) {
-      state.mode = 'participant';
-      toast('Панель администратора доступна только администраторам.');
-    }
+    enforceRoleMode();
   } catch (error) {
     runtime.api = false;
     runtime.me = null;
