@@ -838,7 +838,7 @@ body[data-mode='screen'] .screen-top {
     justify-content: space-between;
   }
   .participant-stage {
-    padding-top: 74px;
+    padding-top: 0;
   }
 }
 @media (max-width: 760px) {
@@ -875,16 +875,12 @@ body[data-mode='screen'] .screen-top {
     transform: none;
   }
   .phone {
-    height: calc(100dvh - 80px);
-    min-height: 540px;
-    border-radius: 36px;
+    height: 100dvh;
+    min-height: 100dvh;
+    border-radius: 0;
   }
   .participant-stage {
-    padding: 62px 10px 10px;
-  }
-  .participant-stage::before,
-  .participant-stage::after {
-    display: none;
+    padding: 0;
   }
   .admin-main {
     padding: 15px 13px 92px;

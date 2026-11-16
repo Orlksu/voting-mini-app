@@ -144,6 +144,9 @@ class User(Base):
     will_attend: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default="1"
     )
+    rsvp_confirmed: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utcnow
     )
@@ -334,6 +337,21 @@ def init_db() -> None:
                 text("UPDATE users SET will_attend = 1 WHERE will_attend IS NULL")
             )
 
+    if "rsvp_confirmed" not in columns:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "ALTER TABLE users ADD COLUMN rsvp_confirmed BOOLEAN "
+                    "NOT NULL DEFAULT FALSE"
+                )
+            )
+            connection.execute(
+                text(
+                    "UPDATE users SET rsvp_confirmed = FALSE "
+                    "WHERE rsvp_confirmed IS NULL"
+                )
+            )
+
 
 @contextmanager
 def session_scope() -> Iterator[Session]:
@@ -454,12 +472,13 @@ def count_registered_users(session: Session) -> int:
 
 
 def count_present_participants(session: Session) -> int:
-    """Number of allowed participants who marked themselves as present."""
+    """Number of allowed participants who confirmed attendance."""
     return (
         session.scalar(
             select(func.count(User.id)).where(
                 User.is_allowed.is_(True),
                 User.role == "user",
+                User.rsvp_confirmed.is_(True),
                 User.will_attend.is_(True),
             )
         )

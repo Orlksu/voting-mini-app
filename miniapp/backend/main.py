@@ -155,6 +155,7 @@ class MeOut(BaseModel):
     is_admin: bool
     is_allowed: bool
     will_attend: bool
+    rsvp_confirmed: bool
 
 
 class OptionCreate(BaseModel):
@@ -518,6 +519,7 @@ def me_out(user: User, is_admin: bool | None = None) -> MeOut:
         is_admin=user.role == "admin" if is_admin is None else is_admin,
         is_allowed=user.is_allowed,
         will_attend=user.will_attend,
+        rsvp_confirmed=user.rsvp_confirmed,
     )
 
 
@@ -760,7 +762,14 @@ def update_rsvp(
     current: CurrentUser = Depends(get_current_user),
     session: Session = Depends(get_db),
 ) -> MeOut:
+    if current.user.rsvp_confirmed:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Attendance response is already confirmed",
+        )
+
     current.user.will_attend = payload.will_attend
+    current.user.rsvp_confirmed = True
     session.commit()
     session.refresh(current.user)
     return me_out(current.user, current.is_admin)
@@ -827,6 +836,12 @@ def cast_vote(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Voting is not open",
+        )
+
+    if not current.user.rsvp_confirmed:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Participant must confirm attendance before voting",
         )
 
     if not current.user.will_attend:
